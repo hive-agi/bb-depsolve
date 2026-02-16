@@ -97,6 +97,41 @@
          (mapv (fn [[match lib version]]
                  {:lib (symbol lib) :version version :match match})))))
 
+(defn find-local-deps
+  "Find all :local/root deps in file content string.
+   Returns vec of {:lib :path :match}. Pure: no I/O."
+  [content]
+  (let [pattern #"([\w.\-]+/[\w.\-]+)\s+\{[^}]*:local/root\s+\"([^\"]+)\"[^}]*\}"]
+    (->> (re-seq pattern content)
+         (mapv (fn [[match lib path]]
+                 {:lib (symbol lib) :path path :match match})))))
+
+(defn replace-local-with-git
+  "Replace a :local/root dep with a :git/tag+sha coordinate in content.
+   Pure: returns new string."
+  [content lib-sym new-tag new-sha]
+  (let [lib-str (str lib-sym)
+        escaped (-> lib-str
+                    (str/replace "." "\\.")
+                    (str/replace "/" "\\/"))
+        pattern (re-pattern
+                 (str "(" escaped "\\s+)\\{[^}]*:local/root\\s+\"[^\"]+\"[^}]*\\}"))]
+    (str/replace content pattern
+                 (str "$1" "{:git/tag \"" new-tag "\" :git/sha \"" new-sha "\"}"))))
+
+(defn replace-local-with-mvn
+  "Replace a :local/root dep with a :mvn/version coordinate in content.
+   Pure: returns new string."
+  [content lib-sym new-version]
+  (let [lib-str (str lib-sym)
+        escaped (-> lib-str
+                    (str/replace "." "\\.")
+                    (str/replace "/" "\\/"))
+        pattern (re-pattern
+                 (str "(" escaped "\\s+)\\{[^}]*:local/root\\s+\"[^\"]+\"[^}]*\\}"))]
+    (str/replace content pattern
+                 (str "$1" "{:mvn/version \"" new-version "\"}"))))
+
 (defn update-git-dep
   "Replace a git dep's tag+sha in file content string. Pure: returns new string."
   [content lib-sym new-tag new-sha]

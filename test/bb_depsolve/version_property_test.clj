@@ -82,6 +82,18 @@
      :tag tag
      :sha sha}))
 
+(def gen-local-path
+  "Generate a plausible :local/root path."
+  (gen/fmap #(str "../" %) (gen/elements ["hive-events" "hive-dsl" "core" "fs" "process"])))
+
+(def gen-local-dep-content
+  "Generate deps.edn content with a single :local/root dep."
+  (gen/let [lib gen-lib-sym
+            path gen-local-path]
+    {:content (str lib " {:local/root \"" path "\"}")
+     :lib lib
+     :path path}))
+
 ;; =============================================================================
 ;; P1: Totality — pure functions never throw for valid input
 ;; =============================================================================
@@ -249,3 +261,47 @@
   (prop/for-all [v gen-version-string]
     ;; Pure numeric versions should never be pre-release
                 (false? (v/pre-release? v))))
+
+;; =============================================================================
+;; P12: find-local-deps totality and parsing
+;; =============================================================================
+
+(props/defprop-total p12-find-local-deps-totality
+  v/find-local-deps gen/string-alphanumeric)
+
+(defspec p12-find-local-deps-roundtrip 200
+  (prop/for-all [{:keys [content lib path]} gen-local-dep-content]
+                (let [deps (v/find-local-deps content)]
+                  (and (= 1 (count deps))
+                       (= lib (:lib (first deps)))
+                       (= path (:path (first deps)))))))
+
+;; =============================================================================
+;; P13: replace-local-with-git roundtrip
+;; =============================================================================
+
+(defspec p13-replace-local-with-git-roundtrip 200
+  (prop/for-all [{:keys [content lib]} gen-local-dep-content
+                 new-tag gen-semver-tag
+                 new-sha gen-sha-short]
+                (let [updated (v/replace-local-with-git content lib new-tag new-sha)
+                      git-deps (v/find-git-deps updated)
+                      local-deps (v/find-local-deps updated)]
+                  (and (= 1 (count git-deps))
+                       (= new-tag (:tag (first git-deps)))
+                       (= new-sha (:sha (first git-deps)))
+                       (empty? local-deps)))))
+
+;; =============================================================================
+;; P14: replace-local-with-mvn roundtrip
+;; =============================================================================
+
+(defspec p14-replace-local-with-mvn-roundtrip 200
+  (prop/for-all [{:keys [content lib]} gen-local-dep-content
+                 new-version gen-version-string]
+                (let [updated (v/replace-local-with-mvn content lib new-version)
+                      mvn-deps (v/find-mvn-deps updated)
+                      local-deps (v/find-local-deps updated)]
+                  (and (= 1 (count mvn-deps))
+                       (= new-version (:version (first mvn-deps)))
+                       (empty? local-deps)))))

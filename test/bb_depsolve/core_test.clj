@@ -1,6 +1,7 @@
 (ns bb-depsolve.core-test
   "Unit tests for bb-depsolve pure calculations (version.clj layer)."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string :as str]
             [bb-depsolve.version :as v]))
 
 ;; =============================================================================
@@ -155,3 +156,59 @@
     (is (false? (v/sha-matches? "abc" "def"))))
   (testing "nil safety"
     (is (nil? (v/sha-matches? nil "abc")))))
+
+;; =============================================================================
+;; find-local-deps
+;; =============================================================================
+
+(deftest find-local-deps-test
+  (testing "parses :local/root deps from edn content"
+    (let [content "io.github.hive-agi/hive-events {:local/root \"../hive-events\"}"
+          deps (v/find-local-deps content)]
+      (is (= 1 (count deps)))
+      (is (= 'io.github.hive-agi/hive-events (:lib (first deps))))
+      (is (= "../hive-events" (:path (first deps))))))
+
+  (testing "finds multiple local deps"
+    (let [content (str "io.github.hive-agi/hive-events {:local/root \"../hive-events\"}\n"
+                       "io.github.hive-agi/hive-dsl {:local/root \"../hive-dsl\"}")
+          deps (v/find-local-deps content)]
+      (is (= 2 (count deps)))
+      (is (= 'io.github.hive-agi/hive-events (:lib (first deps))))
+      (is (= 'io.github.hive-agi/hive-dsl (:lib (second deps))))))
+
+  (testing "returns empty vec when no local deps"
+    (let [content "cheshire/cheshire {:mvn/version \"5.13.0\"}"
+          deps (v/find-local-deps content)]
+      (is (empty? deps))))
+
+  (testing "handles mixed dep types"
+    (let [content (str "cheshire/cheshire {:mvn/version \"5.13.0\"}\n"
+                       "io.github.hive-agi/hive-events {:local/root \"../hive-events\"}\n"
+                       "io.github.hive-agi/hive-dsl {:git/tag \"v0.3.0\" :git/sha \"abc1234\"}")
+          deps (v/find-local-deps content)]
+      (is (= 1 (count deps)))
+      (is (= 'io.github.hive-agi/hive-events (:lib (first deps)))))))
+
+;; =============================================================================
+;; replace-local-with-git / replace-local-with-mvn
+;; =============================================================================
+
+(deftest replace-local-with-git-test
+  (testing "replaces :local/root with :git/tag+sha"
+    (let [content "io.github.hive-agi/hive-events {:local/root \"../hive-events\"}"
+          updated (v/replace-local-with-git content 'io.github.hive-agi/hive-events "v0.4.0" "def5678")]
+      (is (= "io.github.hive-agi/hive-events {:git/tag \"v0.4.0\" :git/sha \"def5678\"}" updated))))
+
+  (testing "preserves other deps"
+    (let [content (str "cheshire/cheshire {:mvn/version \"5.13.0\"}\n"
+                       "io.github.hive-agi/hive-events {:local/root \"../hive-events\"}")
+          updated (v/replace-local-with-git content 'io.github.hive-agi/hive-events "v0.4.0" "def5678")]
+      (is (str/includes? updated "cheshire/cheshire {:mvn/version \"5.13.0\"}"))
+      (is (str/includes? updated "{:git/tag \"v0.4.0\" :git/sha \"def5678\"}")))))
+
+(deftest replace-local-with-mvn-test
+  (testing "replaces :local/root with :mvn/version"
+    (let [content "cheshire/cheshire {:local/root \"../cheshire\"}"
+          updated (v/replace-local-with-mvn content 'cheshire/cheshire "5.14.0")]
+      (is (= "cheshire/cheshire {:mvn/version \"5.14.0\"}" updated)))))
