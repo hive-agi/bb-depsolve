@@ -3,7 +3,7 @@
         babashka/process {:mvn/version "0.6.25"}
         org.babashka/http-client {:mvn/version "0.4.23"}
         org.babashka/cli {:mvn/version "0.8.67"}
-        cheshire/cheshire {:mvn/version "5.13.0"}
+        cheshire/cheshire {:mvn/version "6.1.0"}
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
         io.github.hive-agi/hive-dsl {:git/tag "v0.3.0" :git/sha "2845fbf"}}
  :bbin/bin {bb-depsolve {:main-opts ["-m" "bb-depsolve.cli"]}}
