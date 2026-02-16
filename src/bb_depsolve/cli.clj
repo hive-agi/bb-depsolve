@@ -9,6 +9,7 @@
    {:cmds ["upgrade"] :fn core/upgrade-cmd  :doc "Upgrade all deps to latest versions"}
    {:cmds ["report"]  :fn core/report-cmd   :doc "Show dependency matrix"}
    {:cmds ["lint"]    :fn core/lint-cmd     :doc "Detect dep anti-patterns (:local/root, etc.)"}
+   {:cmds ["bump"]    :fn core/bump-cmd    :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds []          :fn (fn [_] (core/help-cmd dispatch-table))}])
 
 (defn -main [& args]
@@ -16,4 +17,8 @@
                 {:coerce {:apply :boolean
                           :fix :boolean
                           :pre-release :boolean
+                          :major :boolean
+                          :minor :boolean
+                          :stable :boolean
+                          :sync :boolean
                           :depth :long}}))

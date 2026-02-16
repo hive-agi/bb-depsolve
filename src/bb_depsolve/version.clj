@@ -175,6 +175,35 @@
     (:sha resolved-info)))
 
 ;; =============================================================================
+;; Semver Bump — Pure version arithmetic
+;; =============================================================================
+
+(defn bump-patch
+  "Increment patch version. [0 1 1] -> [0 1 2]"
+  [[major minor patch]]
+  [major minor (inc patch)])
+
+(defn bump-minor
+  "Increment minor, zero patch. [0 1 1] -> [0 2 0]"
+  [[major minor _]]
+  [major (inc minor) 0])
+
+(defn bump-major
+  "Increment major, zero minor+patch. [0 1 1] -> [1 0 0]"
+  [[major _ _]]
+  [(inc major) 0 0])
+
+(defn semver->tag
+  "Format semver triple as tag string. [1 2 3] -> \"v1.2.3\""
+  [[major minor patch]]
+  (str "v" major "." minor "." patch))
+
+(defn semver->version
+  "Format semver triple as version string. [1 2 3] -> \"1.2.3\""
+  [[major minor patch]]
+  (str major "." minor "." patch))
+
+;; =============================================================================
 ;; Lib Coordinate Parsing — Pure
 ;; =============================================================================
 

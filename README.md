@@ -21,6 +21,8 @@ Add to your `bb.edn`:
  :tasks
  {sync {:task (exec 'bb-depsolve.cli/-main) :extra-args ["sync" "--org" "your-org"]}
   upgrade {:task (exec 'bb-depsolve.cli/-main) :extra-args ["upgrade"]}
+  lint {:task (exec 'bb-depsolve.cli/-main) :extra-args ["lint"]}
+  bump {:task (exec 'bb-depsolve.cli/-main) :extra-args ["bump"]}
   deps-report {:task (exec 'bb-depsolve.cli/-main) :extra-args ["report"]}}}
 ```
 
@@ -45,12 +47,40 @@ bb -m bb-depsolve.cli upgrade --root . --apply         # interactive selection
 bb -m bb-depsolve.cli upgrade --root . --pre-release    # include alpha/beta/rc
 ```
 
+### `lint` — Detect dep anti-patterns
+
+Finds `:local/root` deps that should be converted to `:git/tag` or `:mvn/version` before publishing. Optionally auto-fixes by splitting into a `local.deps.edn` overlay.
+
+```bash
+bb-depsolve lint --root .
+bb-depsolve lint --root . --fix  # auto-split :local/root into local.deps.edn
+```
+
+### `bump` — Bump VERSION, tag, push
+
+Reads a project's `VERSION` file, increments the version, commits, tags, and pushes. Designed for pre-1.0 semver conventions.
+
+```bash
+bb-depsolve bump                          # minor (patch): 0.2.1 -> 0.2.2
+bb-depsolve bump --major                  # major (minor): 0.2.1 -> 0.3.0
+bb-depsolve bump --stable                 # stable (major): 0.2.1 -> 1.0.0
+bb-depsolve bump --sync --org hive-agi    # bump + update downstream deps
+```
+
+| Flag | Effect | Example |
+|------|--------|---------|
+| _(default)_ | Bump patch | `0.2.1` → `0.2.2` |
+| `--minor` | Bump patch | `0.2.1` → `0.2.2` |
+| `--major` | Bump minor, zero patch | `0.2.1` → `0.3.0` |
+| `--stable` | Bump major, zero rest | `0.2.1` → `1.0.0` |
+| `--sync --org <name>` | After bump, run `sync --apply` on workspace | |
+
 ### `report` — Dependency matrix
 
 Shows which libraries are shared across projects and highlights version drift.
 
 ```bash
-bb -m bb-depsolve.cli report --root .
+bb-depsolve report --root .
 ```
 
 ## Options
@@ -62,7 +92,12 @@ bb -m bb-depsolve.cli report --root .
 | `--skip-dirs <csv>` | `vendor,node_modules,.git,target,.cpcache,.lsp` | Directories to skip |
 | `--depth <n>` | `1` | How deep to scan for dep files |
 | `--apply` | `false` | Write changes (default: dry-run) |
+| `--fix` | `false` | Auto-fix lint issues (split `:local/root` into `local.deps.edn`) |
 | `--pre-release` | `false` | Include pre-release versions in `upgrade` |
+| `--major` | `false` | Bump minor version (pre-1.0 major) |
+| `--minor` | `false` | Bump patch version (explicit, same as default) |
+| `--stable` | `false` | Bump major version (1.0 release) |
+| `--sync` | `false` | After `bump`, run sync on workspace |
 
 ## TUI
 

@@ -212,3 +212,41 @@
     (let [content "cheshire/cheshire {:local/root \"../cheshire\"}"
           updated (v/replace-local-with-mvn content 'cheshire/cheshire "5.14.0")]
       (is (= "cheshire/cheshire {:mvn/version \"5.14.0\"}" updated)))))
+
+;; =============================================================================
+;; bump-patch / bump-minor / bump-major
+;; =============================================================================
+
+(deftest bump-patch-test
+  (testing "increments patch, preserves major and minor"
+    (is (= [0 1 2] (v/bump-patch [0 1 1])))
+    (is (= [0 0 1] (v/bump-patch [0 0 0])))
+    (is (= [5 3 10] (v/bump-patch [5 3 9])))))
+
+(deftest bump-minor-test
+  (testing "increments minor, zeroes patch, preserves major"
+    (is (= [0 2 0] (v/bump-minor [0 1 1])))
+    (is (= [0 1 0] (v/bump-minor [0 0 5])))
+    (is (= [3 4 0] (v/bump-minor [3 3 99])))))
+
+(deftest bump-major-test
+  (testing "increments major, zeroes minor and patch"
+    (is (= [1 0 0] (v/bump-major [0 1 1])))
+    (is (= [1 0 0] (v/bump-major [0 0 0])))
+    (is (= [4 0 0] (v/bump-major [3 5 9])))))
+
+;; =============================================================================
+;; semver->tag / semver->version
+;; =============================================================================
+
+(deftest semver->tag-test
+  (testing "formats semver triple as v-prefixed tag"
+    (is (= "v1.2.3" (v/semver->tag [1 2 3])))
+    (is (= "v0.0.0" (v/semver->tag [0 0 0])))
+    (is (= "v10.20.30" (v/semver->tag [10 20 30])))))
+
+(deftest semver->version-test
+  (testing "formats semver triple as version string"
+    (is (= "1.2.3" (v/semver->version [1 2 3])))
+    (is (= "0.0.0" (v/semver->version [0 0 0])))
+    (is (= "10.20.30" (v/semver->version [10 20 30])))))

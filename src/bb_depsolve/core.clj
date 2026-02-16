@@ -635,6 +635,71 @@
             (println (c :dim "  Pass --fix to auto-split into local.deps.edn and resolve remote coords."))))))))
 
 ;; =============================================================================
+;; Bump Command
+;; =============================================================================
+
+(defn bump-cmd
+  "Bump VERSION file, git commit + tag + push, optionally sync downstream."
+  [{:keys [opts]}]
+  (let [{:keys [root major minor stable sync org]
+         :or {root "."}} opts
+        project-dir (str (fs/canonicalize root))
+        version-file (str (fs/path project-dir "VERSION"))]
+
+    (when-not (fs/exists? version-file)
+      (println (c :red (str "Error: VERSION file not found at " version-file)))
+      (System/exit 1))
+
+    (let [current-str  (str/trim (slurp version-file))
+          current      (v/parse-semver current-str)]
+
+      (when-not current
+        (println (c :red (str "Error: Cannot parse version '" current-str "'")))
+        (System/exit 1))
+
+      (let [bump-fn      (cond stable v/bump-major
+                               major  v/bump-minor
+                               minor  v/bump-patch
+                               :else  v/bump-patch)
+            new-semver   (bump-fn current)
+            new-version  (v/semver->version new-semver)
+            new-tag      (v/semver->tag new-semver)]
+
+        (println (c :bold (str "Bumping " current-str " -> " new-version)))
+        (println)
+
+        ;; Write VERSION
+        (spit version-file (str new-version "\n"))
+        (println (c :green (str "  Updated VERSION: " new-version)))
+
+        ;; Git: commit + tag + push
+        (let [git (fn [& args]
+                    (let [result (proc/sh (into ["git" "-C" project-dir] args))]
+                      (when-not (zero? (:exit result))
+                        (println (c :yellow (str "  git " (first args) ": " (str/trim (:err result ""))))))
+                      result))]
+          (git "add" "VERSION")
+          (git "commit" "-m" (str "release: " new-tag))
+          (println (c :green (str "  Committed: release: " new-tag)))
+
+          (git "tag" new-tag)
+          (println (c :green (str "  Tagged: " new-tag)))
+
+          (git "push")
+          (git "push" "--tags")
+          (println (c :green "  Pushed to remote")))
+
+        (println)
+
+        ;; Optional sync
+        (when (and sync org)
+          (println (c :bold "Running sync..."))
+          (sync-cmd {:opts {:root (str (fs/parent project-dir))
+                            :org org :apply true}}))
+
+        (println (c :green (str "Done: " new-tag)))))))
+
+;; =============================================================================
 ;; Help Command
 ;; =============================================================================
 

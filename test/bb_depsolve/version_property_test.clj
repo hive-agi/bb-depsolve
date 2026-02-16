@@ -305,3 +305,77 @@
                   (and (= 1 (count mvn-deps))
                        (= new-version (:version (first mvn-deps)))
                        (empty? local-deps)))))
+
+;; =============================================================================
+;; P15: bump-patch preserves major/minor, increments patch
+;; =============================================================================
+
+(defspec p15-bump-patch-increments-patch 200
+  (prop/for-all [triple gen-semver-triple]
+                (let [[maj min pat] triple
+                      [new-maj new-min new-pat] (v/bump-patch triple)]
+                  (and (= maj new-maj)
+                       (= min new-min)
+                       (= (inc pat) new-pat)))))
+
+;; =============================================================================
+;; P16: bump-minor preserves major, increments minor, zeroes patch
+;; =============================================================================
+
+(defspec p16-bump-minor-increments-minor 200
+  (prop/for-all [triple gen-semver-triple]
+                (let [[maj min _] triple
+                      [new-maj new-min new-pat] (v/bump-minor triple)]
+                  (and (= maj new-maj)
+                       (= (inc min) new-min)
+                       (zero? new-pat)))))
+
+;; =============================================================================
+;; P17: bump-major increments major, zeroes minor+patch
+;; =============================================================================
+
+(defspec p17-bump-major-increments-major 200
+  (prop/for-all [triple gen-semver-triple]
+                (let [[maj _ _] triple
+                      [new-maj new-min new-pat] (v/bump-major triple)]
+                  (and (= (inc maj) new-maj)
+                       (zero? new-min)
+                       (zero? new-pat)))))
+
+;; =============================================================================
+;; P18: semver->tag roundtrips with parse-semver
+;; =============================================================================
+
+(defspec p18-semver-tag-roundtrip 200
+  (prop/for-all [triple gen-semver-triple]
+                (= triple (v/parse-semver (v/semver->tag triple)))))
+
+;; =============================================================================
+;; P19: semver->version roundtrips with parse-semver
+;; =============================================================================
+
+(defspec p19-semver-version-roundtrip 200
+  (prop/for-all [triple gen-semver-triple]
+                (= triple (v/parse-semver (v/semver->version triple)))))
+
+;; =============================================================================
+;; P20: bumped version is always strictly newer
+;; =============================================================================
+
+(defspec p20-bump-patch-produces-newer 200
+  (prop/for-all [triple gen-semver-triple]
+                (let [old-v (v/semver->version triple)
+                      new-v (v/semver->version (v/bump-patch triple))]
+                  (v/version-newer? old-v new-v))))
+
+(defspec p20-bump-minor-produces-newer 200
+  (prop/for-all [triple gen-semver-triple]
+                (let [old-v (v/semver->version triple)
+                      new-v (v/semver->version (v/bump-minor triple))]
+                  (v/version-newer? old-v new-v))))
+
+(defspec p20-bump-major-produces-newer 200
+  (prop/for-all [triple gen-semver-triple]
+                (let [old-v (v/semver->version triple)
+                      new-v (v/semver->version (v/bump-major triple))]
+                  (v/version-newer? old-v new-v))))
