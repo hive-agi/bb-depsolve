@@ -668,17 +668,28 @@
         (println (c :bold (str "Bumping " current-str " -> " new-version)))
         (println)
 
-        ;; Write VERSION
+        ;; Write VERSION — root + any copies in subdirectories
         (spit version-file (str new-version "\n"))
         (println (c :green (str "  Updated VERSION: " new-version)))
+
+        (let [extra-version-files (->> (fs/glob project-dir "**/VERSION")
+                                       (map str)
+                                       (remove #{version-file}))]
+          (doseq [f extra-version-files]
+            (spit f (str new-version "\n"))
+            (println (c :green (str "  Updated " (str (fs/relativize project-dir f)))))))
 
         ;; Git: commit + tag + push
         (let [git (fn [& args]
                     (let [result (proc/sh (into ["git" "-C" project-dir] args))]
                       (when-not (zero? (:exit result))
                         (println (c :yellow (str "  git " (first args) ": " (str/trim (:err result ""))))))
-                      result))]
-          (git "add" "VERSION")
+                      result))
+              all-version-files (into ["VERSION"]
+                                      (->> (fs/glob project-dir "**/VERSION")
+                                           (map #(str (fs/relativize project-dir %)))))]
+          (doseq [f all-version-files]
+            (git "add" f))
           (git "commit" "-m" (str "release: " new-tag))
           (println (c :green (str "  Committed: release: " new-tag)))
 
