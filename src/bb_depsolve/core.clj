@@ -17,10 +17,6 @@
             [hive-dsl.result :as r]
             [bb-depsolve.version :as v]))
 
-;; =============================================================================
-;; ANSI Colors — presentation concern
-;; =============================================================================
-
 (def ^:private colors
   {:red     "\033[31m"
    :green   "\033[32m"
@@ -41,18 +37,10 @@
         padding (max 0 (- width vlen))]
     (str s (apply str (repeat padding \space)))))
 
-;; =============================================================================
-;; Defaults
-;; =============================================================================
-
 (def default-skip-dirs
   #{"vendor" "node_modules" ".git" "target" ".cpcache" ".lsp"})
 
 (def default-depth 1)
-
-;; =============================================================================
-;; Project Discovery (Action: filesystem I/O)
-;; =============================================================================
 
 (defn- skip-path? [root-dir skip-dirs path]
   (let [rel (str (fs/relativize root-dir path))]
@@ -61,7 +49,7 @@
           skip-dirs)))
 
 (defn find-dep-files
-  "Find all deps.edn and bb.edn files in the workspace."
+  "Find all deps.edn, bb.edn, and shadow-cljs.edn files in the workspace."
   [{:keys [root skip-dirs depth]
     :or {root "." skip-dirs default-skip-dirs depth default-depth}}]
   (let [root-dir (str (fs/canonicalize root))
@@ -72,7 +60,7 @@
                          (sort))
                     [root-dir])]
     (->> (for [dir scan-dirs
-               fname ["deps.edn" "bb.edn"]
+               fname ["deps.edn" "bb.edn" "shadow-cljs.edn"]
                :let [f (fs/path dir fname)]
                :when (fs/exists? f)]
            {:path    (str f)
@@ -80,9 +68,28 @@
             :project (str (fs/file-name dir))})
          (vec))))
 
-;; =============================================================================
-;; Git Tag Resolution (Action: process/network I/O, returns Result)
-;; =============================================================================
+(defn- shadow-deps-file?
+  "True if the dep file is a shadow-cljs.edn."
+  [{:keys [type]}]
+  (= type :shadow-cljs-edn))
+
+(defn extract-mvn-deps
+  "Extract mvn deps from a dep file, dispatching by file type.
+   deps.edn/bb.edn: uses :mvn/version format.
+   shadow-cljs.edn: uses Lein-style [lib \"ver\"] from :dependencies.
+   Returns vec of {:lib :version :match}."
+  [{:keys [type]} content]
+  (if (= type :shadow-cljs-edn)
+    (v/find-shadow-deps content)
+    (v/find-mvn-deps content)))
+
+(defn apply-mvn-change!
+  "Apply a single mvn version change to file content, dispatching by file type.
+   Returns updated content string."
+  [content dep-file lib new-version]
+  (if (shadow-deps-file? dep-file)
+    (v/update-shadow-dep content lib new-version)
+    (v/update-mvn-dep content lib new-version)))
 
 (def ^:private github-url "https://github.com/%s/%s")
 
@@ -129,7 +136,6 @@
         (if-let [latest (v/latest-tag (:ok remote-result))]
           (r/ok (assoc latest :source :remote))
           (r/err :parse/no-semver-tags {:lib lib-sym}))
-        ;; Fallback to local clone
         (let [local-dir (fs/path root-dir dir-name)]
           (if (fs/directory? (fs/path local-dir ".git"))
             (r/let-ok [tags (resolve-local-tags local-dir)]
@@ -138,10 +144,6 @@
                         (r/err :parse/no-semver-tags {:lib lib-sym})))
             (r/err :io/not-found {:lib lib-sym :dir (str local-dir)})))))
     (r/err :parse/not-github-lib {:lib lib-sym})))
-
-;; =============================================================================
-;; Clojars / Maven Central (Action: HTTP I/O, returns Result)
-;; =============================================================================
 
 (defn resolve-clojars-latest
   "Query Clojars API for latest release version. Returns Result<string>."
@@ -185,15 +187,12 @@
                 (r/err :parse/pre-release {:version latest :lib lib-sym})
                 (r/ok latest))))))
 
-;; =============================================================================
-;; Internal Lib Discovery (Calculation delegated to version.clj)
-;; =============================================================================
-
 (defn discover-internal-libs
   "Auto-discover internal git deps by scanning dep files for io.github.{org}/* coords.
    Returns map of lib-sym -> dir-name."
   [dep-files org]
   (->> dep-files
+       (remove shadow-deps-file?)
        (mapcat (fn [{:keys [path]}]
                  (v/find-git-deps (slurp path))))
        (filter #(v/lib-matches-org? org (:lib %)))
@@ -201,14 +200,11 @@
               [lib (v/lib-artifact-id lib)]))
        (into {})))
 
-;; =============================================================================
-;; Diff Computation — Pure calculation over resolved data
-;; =============================================================================
-
 (defn compute-sync-changes
   "Compute sync changes between dep files and resolved lib versions. Pure."
   [dep-files resolved]
   (->> dep-files
+       (remove shadow-deps-file?)
        (mapcat (fn [{:keys [path project]}]
                  (let [content (slurp path)
                        git-deps (v/find-git-deps content)]
@@ -237,22 +233,20 @@
     (println (c :green (format "Applied %d changes." (count changes))))))
 
 (defn apply-mvn-upgrades!
-  "Apply mvn version upgrades to files. Action: writes to disk."
-  [root-dir upgrades]
+  "Apply mvn version upgrades to files. Action: writes to disk.
+   Dispatches to the correct update fn based on file type."
+  [root-dir upgrades dep-file-index]
   (let [by-file (group-by :path upgrades)]
     (doseq [[path file-upgrades] by-file
-            :let [content (atom (slurp path))]]
+            :let [content (atom (slurp path))
+                  dep-file (get dep-file-index path)]]
       (doseq [{:keys [lib new-version]} file-upgrades]
-        (swap! content v/update-mvn-dep lib new-version))
+        (swap! content apply-mvn-change! dep-file lib new-version))
       (spit path @content)
       (println (c :green (str "  Updated " (str (fs/relativize root-dir path))))))
     (println)
     (println (c :green (format "Applied %d upgrades across %d files."
                                (count upgrades) (count by-file))))))
-
-;; =============================================================================
-;; Gum TUI helpers (with plain-text fallback for non-TTY)
-;; =============================================================================
 
 (defn- tty? []
   (zero? (:exit (proc/sh ["test" "-t" "0"] {:continue true}))))
@@ -297,10 +291,6 @@
                                            :no-limit true
                                            :header header)]
       (when (= 0 status) result))))
-
-;; =============================================================================
-;; Sync Command
-;; =============================================================================
 
 (defn sync-cmd
   "Sync internal git deps across all workspace projects."
@@ -354,10 +344,6 @@
                 (apply-git-changes! root-dir changes)
                 (println (c :dim "  Dry run. Pass --apply to write changes."))))))))))
 
-;; =============================================================================
-;; Upgrade Command
-;; =============================================================================
-
 (defn upgrade-cmd
   "Check for newer versions of all dependencies."
   [{:keys [opts]}]
@@ -367,7 +353,8 @@
         skip-set (if skip-dirs
                    (into #{} (str/split skip-dirs #","))
                    default-skip-dirs)
-        dep-files (find-dep-files {:root root :skip-dirs skip-set :depth depth})]
+        dep-files (find-dep-files {:root root :skip-dirs skip-set :depth depth})
+        dep-file-index (into {} (map (fn [df] [(:path df) df]) dep-files))]
 
     (println (c :bold "Checking latest versions..."))
     (println)
@@ -375,9 +362,9 @@
     (let [all-mvn-deps (atom {})
           file-deps (atom [])]
 
-      (doseq [{:keys [path project]} dep-files
+      (doseq [{:keys [path project] :as dep-file} dep-files
               :let [content (slurp path)
-                    mvn-deps (v/find-mvn-deps content)]]
+                    mvn-deps (extract-mvn-deps dep-file content)]]
         (doseq [{:keys [lib version]} mvn-deps]
           (swap! all-mvn-deps update lib (fnil conj #{}) version)
           (swap! file-deps conj {:path path :project project
@@ -451,12 +438,8 @@
                                              (map #(-> % str/trim (str/split #"\s+" 2) first symbol))
                                              (set))
                           selected-upgrades (filter #(contains? selected-libs (:lib %)) upgrades)]
-                      (apply-mvn-upgrades! root-dir selected-upgrades))))
+                      (apply-mvn-upgrades! root-dir selected-upgrades dep-file-index))))
                 (println (c :dim "  Dry run. Pass --apply for interactive selection."))))))))))
-
-;; =============================================================================
-;; Report Command
-;; =============================================================================
 
 (defn report-cmd
   "Show a dependency matrix across all projects."
@@ -469,10 +452,12 @@
         dep-files (find-dep-files {:root root :skip-dirs skip-set :depth depth})
         matrix (atom (sorted-map))]
 
-    (doseq [{:keys [path project]} dep-files
+    (doseq [{:keys [path project] :as dep-file} dep-files
             :let [content (slurp path)
-                  mvn-deps (v/find-mvn-deps content)
-                  git-deps (v/find-git-deps content)]]
+                  mvn-deps (extract-mvn-deps dep-file content)
+                  git-deps (if (shadow-deps-file? dep-file)
+                             []
+                             (v/find-git-deps content))]]
       (doseq [{:keys [lib version]} mvn-deps]
         (swap! matrix assoc-in [lib project] version))
       (doseq [{:keys [lib tag sha]} git-deps]
@@ -493,10 +478,6 @@
                                 (count multi-project) drift-count)))
       (println)
       (gum-table csv multi-project all-projects))))
-
-;; =============================================================================
-;; Lint Command — detect anti-patterns in dep files
-;; =============================================================================
 
 (defn- format-local-dep-warning
   "Format a warning line for a :local/root dep."
@@ -538,11 +519,10 @@
     (println (c :bold "Linting dep files for anti-patterns..."))
     (println)
 
-    ;; Scan for :local/root deps
     (let [all-locals (atom [])
           by-file (atom {})]
 
-      (doseq [{:keys [path project]} dep-files
+      (doseq [{:keys [path project]} (remove shadow-deps-file? dep-files)
               :let [content (slurp path)
                     locals (v/find-local-deps content)]
               :when (seq locals)]
@@ -568,21 +548,17 @@
           (println)
 
           (if fix
-            ;; ── Auto-fix: split :local/root → local.deps.edn + resolve remote coords ──
             (do
               (println (c :bold "Fixing: splitting :local/root deps..."))
               (println)
 
-              ;; 1. Group all unique local deps
               (let [unique-locals (->> @all-locals
                                        (map #(select-keys % [:lib :path]))
                                        (distinct))]
 
-                ;; 2. Generate local.deps.edn per project directory
                 (doseq [[file-path {:keys [project locals content]}] @by-file
                         :let [project-dir (str (fs/parent file-path))]]
 
-                  ;; Write local.deps.edn
                   (let [local-deps-path (str (fs/path project-dir "local.deps.edn"))]
                     (if (fs/exists? local-deps-path)
                       (println (c :yellow (str "  Skipped " (str (fs/relativize root-dir local-deps-path))
@@ -591,16 +567,13 @@
                         (spit local-deps-path (generate-local-deps-edn locals))
                         (println (c :green (str "  Created " (str (fs/relativize root-dir local-deps-path))))))))
 
-                  ;; Add to .gitignore
                   (ensure-gitignore-entry! project-dir "local.deps.edn")
 
-                  ;; 3. Replace :local/root with resolved remote coordinates
                   (let [updated-content (atom content)
                         replaced (atom 0)]
-                    (doseq [{:keys [lib]} locals
+                    (doseq [{:keys [lib path]} locals
                             :let [github? (v/parse-github-lib lib)]]
                       (if github?
-                        ;; Internal github lib — resolve latest tag
                         (let [dir-name (v/lib-artifact-id lib)
                               tag-result (resolve-lib-tags root-dir lib dir-name)]
                           (if (r/ok? tag-result)
@@ -612,18 +585,31 @@
                                             " -> " (c :green tag) " " (c :dim use-sha))))
                             (println (c :yellow (str "  Could not resolve " lib
                                                      " — remove :local/root manually")))))
-                        ;; External lib — try Clojars/Maven
-                        (let [mvn-result (resolve-mvn-latest lib false)]
-                          (if (r/ok? mvn-result)
-                            (let [version (:ok mvn-result)]
-                              (swap! updated-content v/replace-local-with-mvn lib version)
+                        ;; Not io.github.* — try local sibling dir first, then mvn
+                        (let [sibling-dir (v/infer-sibling-dir path)
+                              local-dir (when sibling-dir (fs/path root-dir sibling-dir))
+                              local-tag (when (and local-dir (fs/directory? (fs/path local-dir ".git")))
+                                          (resolve-local-tags (str local-dir)))]
+                          (if-let [latest (and (r/ok? local-tag) (v/latest-tag (:ok local-tag)))]
+                            (let [{:keys [tag sha]} latest
+                                  use-sha (if (<= (count sha) 12) sha (subs sha 0 7))
+                                  canonical (when org (symbol (str "io.github." org "/" sibling-dir)))]
+                              (swap! updated-content v/replace-local-with-git lib tag use-sha canonical)
                               (swap! replaced inc)
                               (println (str "  " (c :cyan (str lib))
-                                            " -> " (c :green version))))
-                            (println (c :yellow (str "  Could not resolve " lib
-                                                     " — remove :local/root manually")))))))
+                                            (when canonical (str " -> " (c :cyan (str canonical))))
+                                            " -> " (c :green tag) " " (c :dim use-sha)
+                                            " (local sibling: " sibling-dir ")")))
+                            (let [mvn-result (resolve-mvn-latest lib false)]
+                              (if (r/ok? mvn-result)
+                                (let [version (:ok mvn-result)]
+                                  (swap! updated-content v/replace-local-with-mvn lib version)
+                                  (swap! replaced inc)
+                                  (println (str "  " (c :cyan (str lib))
+                                                " -> " (c :green version))))
+                                (println (c :yellow (str "  Could not resolve " lib
+                                                         " — remove :local/root manually")))))))))
 
-                    ;; Write updated deps.edn if any replacements were made
                     (when (pos? @replaced)
                       (spit file-path @updated-content)
                       (println (c :green (str "  Updated " (str (fs/relativize root-dir file-path))))))))
@@ -631,12 +617,7 @@
                 (println)
                 (println (c :green "Done. Review the changes and commit."))))
 
-            ;; ── Dry run ──
             (println (c :dim "  Pass --fix to auto-split into local.deps.edn and resolve remote coords."))))))))
-
-;; =============================================================================
-;; Bump Command
-;; =============================================================================
 
 (defn bump-cmd
   "Bump VERSION file, git commit + tag + push, optionally sync downstream."
@@ -668,7 +649,6 @@
         (println (c :bold (str "Bumping " current-str " -> " new-version)))
         (println)
 
-        ;; Write VERSION — root + any copies in subdirectories
         (spit version-file (str new-version "\n"))
         (println (c :green (str "  Updated VERSION: " new-version)))
 
@@ -679,7 +659,6 @@
             (spit f (str new-version "\n"))
             (println (c :green (str "  Updated " (str (fs/relativize project-dir f)))))))
 
-        ;; Git: commit + tag + push
         (let [git (fn [& args]
                     (let [result (proc/sh (into ["git" "-C" project-dir] args))]
                       (when-not (zero? (:exit result))
@@ -702,17 +681,12 @@
 
         (println)
 
-        ;; Optional sync
         (when (and sync org)
           (println (c :bold "Running sync..."))
           (sync-cmd {:opts {:root (str (fs/parent project-dir))
                             :org org :apply true}}))
 
         (println (c :green (str "Done: " new-tag)))))))
-
-;; =============================================================================
-;; Help Command
-;; =============================================================================
 
 (defn help-cmd
   "Print help text for available commands."

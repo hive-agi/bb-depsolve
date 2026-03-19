@@ -6,10 +6,6 @@
    Sits at the bottom of the dependency stack — innermost onion layer."
   (:require [clojure.string :as str]))
 
-;; =============================================================================
-;; Semver — Value Object
-;; =============================================================================
-
 (defn parse-semver
   "Parse a semver tag like 'v0.4.0' into [major minor patch].
    Returns nil for non-semver strings. Total: never throws."
@@ -62,10 +58,6 @@
         pad (fn [v] (vec (concat v (repeat (- max-len (count v)) 0))))]
     (compare (pad pa) (pad pb))))
 
-;; =============================================================================
-;; Tag Selection — Pure Calculation over tag lists
-;; =============================================================================
-
 (defn latest-tag
   "Get the latest semver tag from a list of {:tag :sha} maps.
    Pure: no I/O. Returns nil if no valid semver tags found."
@@ -74,10 +66,6 @@
        (filter #(parse-semver (:tag %)))
        (sort-by #(parse-semver (:tag %)))
        last))
-
-;; =============================================================================
-;; Dep Coordinate Parsing — Pure string operations
-;; =============================================================================
 
 (defn find-git-deps
   "Find all git deps in file content string.
@@ -97,6 +85,42 @@
          (mapv (fn [[match lib version]]
                  {:lib (symbol lib) :version version :match match})))))
 
+(defn find-shadow-deps
+  "Find all dependencies in shadow-cljs.edn :dependencies vector.
+   Parses Leiningen-style [lib \"version\"] coordinates.
+   Returns vec of {:lib :version :match}. Pure: no I/O.
+
+   Handles both qualified (group/artifact) and unqualified (artifact) names.
+   Unqualified names are normalized to artifact/artifact (Maven convention)."
+  [content]
+  (let [pattern #"\[([\w.\-]+(?:/[\w.\-]+)?)\s+\"([^\"]+)\"\s*(?::scope\s+\"[^\"]+\"\s*)?\]"]
+    (->> (re-seq pattern content)
+         (mapv (fn [[match lib version]]
+                 (let [lib-sym (if (str/includes? lib "/")
+                                 (symbol lib)
+                                 (symbol lib lib))]
+                   {:lib lib-sym :version version :match match}))))))
+
+(defn update-shadow-dep
+  "Replace a dependency version in shadow-cljs.edn :dependencies vector.
+   Handles both [group/artifact \"ver\"] and [artifact \"ver\"] forms.
+   Pure: returns new string."
+  [content lib-sym new-version]
+  (let [lib-str (str lib-sym)
+        ;; For unqualified names like reagent/reagent, also match bare [reagent ...]
+        names (if (let [[g a] (str/split lib-str #"/")] (= g a))
+                [(str/replace lib-str #"/.*" "") lib-str]
+                [lib-str])
+        escaped-names (map (fn [n]
+                             (-> n
+                                 (str/replace "." "\\.")
+                                 (str/replace "/" "\\/")))
+                           names)
+        alt-pattern (str/join "|" escaped-names)
+        pattern (re-pattern
+                 (str "(\\[)(" alt-pattern ")(\\s+\")([^\"]+)(\")"))]
+    (str/replace content pattern (str "$1$2$3" new-version "$5"))))
+
 (defn find-local-deps
   "Find all :local/root deps in file content string.
    Returns vec of {:lib :path :match}. Pure: no I/O."
@@ -108,16 +132,20 @@
 
 (defn replace-local-with-git
   "Replace a :local/root dep with a :git/tag+sha coordinate in content.
+   Optionally renames the lib (e.g. hive-mcp/hive-mcp -> io.github.hive-agi/hive-mcp).
    Pure: returns new string."
-  [content lib-sym new-tag new-sha]
-  (let [lib-str (str lib-sym)
-        escaped (-> lib-str
-                    (str/replace "." "\\.")
-                    (str/replace "/" "\\/"))
-        pattern (re-pattern
-                 (str "(" escaped "\\s+)\\{[^}]*:local/root\\s+\"[^\"]+\"[^}]*\\}"))]
-    (str/replace content pattern
-                 (str "$1" "{:git/tag \"" new-tag "\" :git/sha \"" new-sha "\"}"))))
+  ([content lib-sym new-tag new-sha]
+   (replace-local-with-git content lib-sym new-tag new-sha nil))
+  ([content lib-sym new-tag new-sha new-lib-sym]
+   (let [lib-str (str lib-sym)
+         escaped (-> lib-str
+                     (str/replace "." "\\.")
+                     (str/replace "/" "\\/"))
+         pattern (re-pattern
+                  (str escaped "(\\s+)\\{[^}]*:local/root\\s+\"[^\"]+\"[^}]*\\}"))
+         replacement-lib (str (or new-lib-sym lib-sym))]
+     (str/replace content pattern
+                  (str replacement-lib "$1" "{:git/tag \"" new-tag "\" :git/sha \"" new-sha "\"}")))))
 
 (defn replace-local-with-mvn
   "Replace a :local/root dep with a :mvn/version coordinate in content.
@@ -155,10 +183,6 @@
                  (str "(" escaped "\\s+\\{[^}]*:mvn/version\\s+\")([^\"]+)(\")"))]
     (str/replace content pattern (str "$1" new-version "$3"))))
 
-;; =============================================================================
-;; SHA Matching — Pure comparison
-;; =============================================================================
-
 (defn sha-matches?
   "Compare two SHA strings by their common prefix length.
    Handles short vs full SHA comparison."
@@ -173,10 +197,6 @@
   (if (<= (count (str old-sha)) 12)
     (:sha-short resolved-info (:sha resolved-info))
     (:sha resolved-info)))
-
-;; =============================================================================
-;; Semver Bump — Pure version arithmetic
-;; =============================================================================
 
 (defn bump-patch
   "Increment patch version. [0 1 1] -> [0 1 2]"
@@ -203,15 +223,21 @@
   [[major minor patch]]
   (str major "." minor "." patch))
 
-;; =============================================================================
-;; Lib Coordinate Parsing — Pure
-;; =============================================================================
-
 (defn parse-github-lib
   "Parse io.github.org/repo into {:org :repo}. Returns nil if not a github lib."
   [lib-sym]
   (when-let [[_ org repo] (re-matches #"io\.github\.(.+)/(.+)" (str lib-sym))]
     {:org org :repo repo}))
+
+(defn infer-sibling-dir
+  "Infer the sibling directory name from a :local/root path like '../hive-events'.
+   Returns the directory basename, or nil if the path is absolute or not a sibling ref."
+  [local-path]
+  (when (and (string? local-path)
+             (str/starts-with? local-path "../"))
+    (let [basename (last (str/split local-path #"/"))]
+      (when-not (str/blank? basename)
+        basename))))
 
 (defn lib-matches-org?
   "True if lib-sym belongs to the given GitHub org."

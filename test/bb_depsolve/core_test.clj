@@ -4,10 +4,6 @@
             [clojure.string :as str]
             [bb-depsolve.version :as v]))
 
-;; =============================================================================
-;; parse-semver
-;; =============================================================================
-
 (deftest parse-semver-test
   (testing "standard semver with v prefix"
     (is (= [0 4 0] (v/parse-semver "v0.4.0")))
@@ -25,10 +21,6 @@
     (is (nil? (v/parse-semver "latest")))
     (is (nil? (v/parse-semver "abc")))
     (is (nil? (v/parse-semver "")))))
-
-;; =============================================================================
-;; version-newer?
-;; =============================================================================
 
 (deftest version-newer?-test
   (testing "simple version comparisons"
@@ -52,10 +44,6 @@
     (is (true? (v/version-newer? "0.4.22" "0.4.23")))
     (is (false? (v/version-newer? "5.13.0" "5.12.0")))))
 
-;; =============================================================================
-;; pre-release? / stable?
-;; =============================================================================
-
 (deftest pre-release?-test
   (testing "pre-release markers"
     (is (true? (v/pre-release? "1.0.0-alpha")))
@@ -68,10 +56,6 @@
     (is (false? (v/pre-release? "1.0.0")))
     (is (false? (v/pre-release? "5.13.0")))
     (is (false? (v/pre-release? "0.5.30")))))
-
-;; =============================================================================
-;; find-git-deps / find-mvn-deps
-;; =============================================================================
 
 (deftest find-git-deps-test
   (testing "parses git deps from edn content"
@@ -90,9 +74,84 @@
       (is (= 'cheshire/cheshire (:lib (first deps))))
       (is (= "5.13.0" (:version (first deps)))))))
 
-;; =============================================================================
-;; update-git-dep / update-mvn-dep
-;; =============================================================================
+(deftest find-shadow-deps-test
+  (testing "parses qualified deps from shadow-cljs.edn :dependencies"
+    (let [content ":dependencies [[re-frame/re-frame \"1.4.3\"]\n                [day8.re-frame/http-fx \"0.2.4\"]]"
+          deps (v/find-shadow-deps content)]
+      (is (= 2 (count deps)))
+      (is (= 're-frame/re-frame (:lib (first deps))))
+      (is (= "1.4.3" (:version (first deps))))
+      (is (= 'day8.re-frame/http-fx (:lib (second deps))))
+      (is (= "0.2.4" (:version (second deps))))))
+
+  (testing "normalizes unqualified deps to group=artifact"
+    (let [content ":dependencies [[reagent \"2.0.1\"]\n                [haslett \"0.1.6\"]]"
+          deps (v/find-shadow-deps content)]
+      (is (= 2 (count deps)))
+      (is (= 'reagent/reagent (:lib (first deps))))
+      (is (= "2.0.1" (:version (first deps))))
+      (is (= 'haslett/haslett (:lib (second deps))))
+      (is (= "0.1.6" (:version (second deps))))))
+
+  (testing "handles mixed qualified and unqualified"
+    (let [content ":dependencies [[re-frame \"1.4.3\"]\n                [metosin/reitit \"0.7.0-alpha7\"]\n                [binaryage/devtools \"1.0.7\"]]"
+          deps (v/find-shadow-deps content)]
+      (is (= 3 (count deps)))
+      (is (= 're-frame/re-frame (:lib (first deps))))
+      (is (= 'metosin/reitit (:lib (second deps))))
+      (is (= 'binaryage/devtools (:lib (nth deps 2))))))
+
+  (testing "handles deps with :scope metadata"
+    (let [content ":dependencies [[reagent \"2.0.1\" :scope \"test\"]]"
+          deps (v/find-shadow-deps content)]
+      (is (= 1 (count deps)))
+      (is (= 'reagent/reagent (:lib (first deps))))
+      (is (= "2.0.1" (:version (first deps))))))
+
+  (testing "returns empty vec for no dependencies"
+    (let [content "{:deps true :builds {:app {:target :browser}}}"
+          deps (v/find-shadow-deps content)]
+      (is (empty? deps))))
+
+  (testing "real-world olympus shadow-cljs.edn content"
+    (let [content (str ":dependencies [[re-frame \"1.4.3\"]\n"
+                       "                [reagent \"2.0.1\"]\n"
+                       "                [day8.re-frame/http-fx \"0.2.4\"]\n"
+                       "                [haslett \"0.1.6\"]\n"
+                       "                [metosin/reitit \"0.7.0-alpha7\"]\n"
+                       "                [binaryage/devtools \"1.0.7\"]]")
+          deps (v/find-shadow-deps content)]
+      (is (= 6 (count deps)))
+      (is (= #{'re-frame/re-frame 'reagent/reagent 'day8.re-frame/http-fx
+               'haslett/haslett 'metosin/reitit 'binaryage/devtools}
+             (set (map :lib deps)))))))
+
+(deftest update-shadow-dep-test
+  (testing "updates qualified dep version"
+    (let [content ":dependencies [[day8.re-frame/http-fx \"0.2.4\"]]"
+          updated (v/update-shadow-dep content 'day8.re-frame/http-fx "0.3.0")]
+      (is (= ":dependencies [[day8.re-frame/http-fx \"0.3.0\"]]" updated))))
+
+  (testing "updates unqualified dep version (lib sym has group=artifact)"
+    (let [content ":dependencies [[reagent \"2.0.1\"]]"
+          updated (v/update-shadow-dep content 'reagent/reagent "2.1.0")]
+      (is (= ":dependencies [[reagent \"2.1.0\"]]" updated))))
+
+  (testing "preserves other deps when updating one"
+    (let [content (str ":dependencies [[re-frame \"1.4.3\"]\n"
+                       "                [reagent \"2.0.1\"]]")
+          updated (v/update-shadow-dep content 'reagent/reagent "2.1.0")]
+      (is (str/includes? updated "[re-frame \"1.4.3\"]"))
+      (is (str/includes? updated "[reagent \"2.1.0\"]"))))
+
+  (testing "updates only the target dep in multi-dep list"
+    (let [content (str ":dependencies [[re-frame \"1.4.3\"]\n"
+                       "                [day8.re-frame/http-fx \"0.2.4\"]\n"
+                       "                [reagent \"2.0.1\"]]")
+          updated (v/update-shadow-dep content 'day8.re-frame/http-fx "0.3.0")]
+      (is (str/includes? updated "[re-frame \"1.4.3\"]"))
+      (is (str/includes? updated "[day8.re-frame/http-fx \"0.3.0\"]"))
+      (is (str/includes? updated "[reagent \"2.0.1\"]")))))
 
 (deftest update-git-dep-test
   (testing "replaces tag and sha in content"
@@ -105,10 +164,6 @@
     (let [content "cheshire/cheshire {:mvn/version \"5.13.0\"}"
           updated (v/update-mvn-dep content 'cheshire/cheshire "5.14.0")]
       (is (= "cheshire/cheshire {:mvn/version \"5.14.0\"}" updated)))))
-
-;; =============================================================================
-;; latest-tag
-;; =============================================================================
 
 (deftest latest-tag-test
   (testing "finds the latest semver tag"
@@ -125,10 +180,6 @@
   (testing "empty list returns nil"
     (is (nil? (v/latest-tag [])))))
 
-;; =============================================================================
-;; parse-github-lib / lib-matches-org? / lib-artifact-id
-;; =============================================================================
-
 (deftest parse-github-lib-test
   (testing "parses github lib coords"
     (is (= {:org "hive-agi" :repo "hive-events"}
@@ -144,10 +195,6 @@
   (is (= "hive-events" (v/lib-artifact-id 'io.github.hive-agi/hive-events)))
   (is (= "cheshire" (v/lib-artifact-id 'cheshire/cheshire))))
 
-;; =============================================================================
-;; sha-matches? / pick-sha
-;; =============================================================================
-
 (deftest sha-matches?-test
   (testing "prefix match"
     (is (true? (v/sha-matches? "abc1234" "abc1234567890")))
@@ -156,10 +203,6 @@
     (is (false? (v/sha-matches? "abc" "def"))))
   (testing "nil safety"
     (is (nil? (v/sha-matches? nil "abc")))))
-
-;; =============================================================================
-;; find-local-deps
-;; =============================================================================
 
 (deftest find-local-deps-test
   (testing "parses :local/root deps from edn content"
@@ -190,10 +233,6 @@
       (is (= 1 (count deps)))
       (is (= 'io.github.hive-agi/hive-events (:lib (first deps)))))))
 
-;; =============================================================================
-;; replace-local-with-git / replace-local-with-mvn
-;; =============================================================================
-
 (deftest replace-local-with-git-test
   (testing "replaces :local/root with :git/tag+sha"
     (let [content "io.github.hive-agi/hive-events {:local/root \"../hive-events\"}"
@@ -213,10 +252,6 @@
           updated (v/replace-local-with-mvn content 'cheshire/cheshire "5.14.0")]
       (is (= "cheshire/cheshire {:mvn/version \"5.14.0\"}" updated)))))
 
-;; =============================================================================
-;; bump-patch / bump-minor / bump-major
-;; =============================================================================
-
 (deftest bump-patch-test
   (testing "increments patch, preserves major and minor"
     (is (= [0 1 2] (v/bump-patch [0 1 1])))
@@ -234,10 +269,6 @@
     (is (= [1 0 0] (v/bump-major [0 1 1])))
     (is (= [1 0 0] (v/bump-major [0 0 0])))
     (is (= [4 0 0] (v/bump-major [3 5 9])))))
-
-;; =============================================================================
-;; semver->tag / semver->version
-;; =============================================================================
 
 (deftest semver->tag-test
   (testing "formats semver triple as v-prefixed tag"
