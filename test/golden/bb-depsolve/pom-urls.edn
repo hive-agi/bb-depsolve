@@ -1,0 +1,9 @@
+{:simple-group
+ ["https://repo.clojars.org/cheshire/cheshire/6.1.0/cheshire-6.1.0.pom"
+  "https://repo1.maven.org/maven2/cheshire/cheshire/6.1.0/cheshire-6.1.0.pom"],
+ :nested-group
+ ["https://repo.clojars.org/com/fasterxml/jackson/core/jackson-databind/2.17.0/jackson-databind-2.17.0.pom"
+  "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.17.0/jackson-databind-2.17.0.pom"],
+ :clojure
+ ["https://repo.clojars.org/org/clojure/clojure/1.12.0/clojure-1.12.0.pom"
+  "https://repo1.maven.org/maven2/org/clojure/clojure/1.12.0/clojure-1.12.0.pom"]}

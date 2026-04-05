@@ -1,0 +1,7 @@
+["org.clojure/clojure 1.12.0"
+ "  org.clojure/spec.alpha 0.3.218"
+ "  org.clojure/core.specs.alpha 0.2.62"
+ "cheshire/cheshire 6.1.0"
+ "  com.fasterxml.jackson.core/jackson-core 2.17.0"
+ "  tigris/tigris 0.1.2"
+ "cyclic/dep 0.1.0 (cycle)"]
