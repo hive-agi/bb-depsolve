@@ -5,7 +5,7 @@
         org.babashka/cli {:mvn/version "0.8.67"}
         cheshire/cheshire {:mvn/version "6.2.0"}
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
-        io.github.hive-agi/hive-dsl {:git/tag "v0.3.7" :git/sha "d5deced"}}
+        io.github.hive-agi/hive-dsl {:git/tag "v0.3.8" :git/sha "6f44e1b"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
