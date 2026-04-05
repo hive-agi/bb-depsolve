@@ -29,6 +29,12 @@
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help core/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
     :doc "Show transitive dependency tree with conflict detection"}
+   {:cmds ["bump-wave"]    :fn (wrap-help core/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
+    :doc "Bump all projects with commits ahead of their tag"}
+   {:cmds ["push-all"]     :fn (wrap-help core/push-all-cmd     "push-all"     "Push all workspace projects to remotes")
+    :doc "Push all workspace projects to remotes"}
+   {:cmds ["release-wave"] :fn (wrap-help core/release-wave-cmd "release-wave" "Full release: upgrade → lint → sync → bump → push")
+    :doc "Full release: upgrade → lint → sync → bump → push"}
    {:cmds []          :fn (fn [_] (core/help-cmd dispatch-table))}])
 
 (defn -main [& args]
@@ -37,6 +43,7 @@
                           :fix :boolean
                           :pre-release :boolean
                           :conflicts-only :boolean
+                          :commit :boolean
                           :help :boolean
                           :major :boolean
                           :minor :boolean

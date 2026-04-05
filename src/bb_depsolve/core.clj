@@ -41,6 +41,61 @@
         padding (max 0 (- width vlen))]
     (str s (apply str (repeat padding \space)))))
 
+;; =============================================================================
+;; Git helpers (auto-commit, push, workspace ops)
+;; =============================================================================
+
+(defn- git
+  "Run a git command in project-dir. Returns process result map."
+  [project-dir & args]
+  (proc/sh (into ["git" "-C" (str project-dir)] args)))
+
+(defn- git-changed-files
+  "Get list of changed (tracked + untracked dep) files in a project dir."
+  [project-dir]
+  (let [result (git project-dir "diff" "--name-only" "--" "*.edn" ".gitignore")]
+    (when (zero? (:exit result))
+      (->> (str/split-lines (:out result))
+           (remove str/blank?)
+           (vec)))))
+
+(defn- git-commits-ahead
+  "Count commits ahead of a tag. Returns 0 if tag doesn't exist."
+  [project-dir tag]
+  (let [result (git project-dir "log" "--oneline" (str tag "..HEAD"))]
+    (if (zero? (:exit result))
+      (count (remove str/blank? (str/split-lines (:out result))))
+      0)))
+
+(defn- git-has-remote?
+  "Check if project has at least one remote configured."
+  [project-dir]
+  (let [result (git project-dir "remote")]
+    (and (zero? (:exit result))
+         (not (str/blank? (:out result))))))
+
+(defn- auto-commit-project!
+  "Commit changed dep files in a project with descriptive message.
+   Returns true if a commit was made."
+  [project-dir message]
+  (let [changed (git-changed-files project-dir)]
+    (when (seq changed)
+      (doseq [f changed]
+        (git project-dir "add" f))
+      (let [result (git project-dir "commit" "-m" message)]
+        (zero? (:exit result))))))
+
+(defn- auto-commit-workspace!
+  "Commit all changed dep files across workspace projects."
+  [root-dir dep-files message]
+  (let [projects (->> dep-files
+                      (map :project)
+                      (distinct))]
+    (doseq [project projects
+            :let [project-dir (str (fs/path root-dir project))]]
+      (when (auto-commit-project! project-dir message)
+        (println (c :green (str "  Committed: " project)))))))
+
 (def default-skip-dirs
   #{"vendor" "node_modules" ".git" "target" ".cpcache" ".lsp"})
 
@@ -51,6 +106,17 @@
     (some #(or (= rel %)
                (str/starts-with? rel (str % "/")))
           skip-dirs)))
+
+(defn- find-workspace-projects
+  "Find all git-initialized subdirectories with VERSION files."
+  [root-dir skip-dirs]
+  (->> (fs/list-dir root-dir)
+       (filter fs/directory?)
+       (remove #(skip-path? root-dir skip-dirs %))
+       (filter #(fs/exists? (fs/path % "VERSION")))
+       (filter #(fs/exists? (fs/path % ".git")))
+       (sort)
+       (vec)))
 
 (defn find-dep-files
   "Find all deps.edn, bb.edn, and shadow-cljs.edn files in the workspace."
@@ -299,7 +365,7 @@
 (defn sync-cmd
   "Sync internal git deps across all workspace projects."
   [{:keys [opts]}]
-  (let [{:keys [root org apply skip-dirs depth]
+  (let [{:keys [root org apply commit skip-dirs depth]
          :or {root "." depth default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -345,13 +411,16 @@
                         (c :green new-tag) (c :dim new-sha)))
               (println)
               (if apply
-                (apply-git-changes! root-dir changes)
+                (do (apply-git-changes! root-dir changes)
+                    (when commit
+                      (auto-commit-workspace! root-dir dep-files
+                                              "chore: sync internal git deps (bb-depsolve)")))
                 (println (c :dim "  Dry run. Pass --apply to write changes."))))))))))
 
 (defn upgrade-cmd
   "Check for newer versions of all dependencies."
   [{:keys [opts]}]
-  (let [{:keys [root apply skip-dirs depth pre-release]
+  (let [{:keys [root apply commit skip-dirs depth pre-release]
          :or {root "." depth default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -442,7 +511,10 @@
                                              (map #(-> % str/trim (str/split #"\s+" 2) first symbol))
                                              (set))
                           selected-upgrades (filter #(contains? selected-libs (:lib %)) upgrades)]
-                      (apply-mvn-upgrades! root-dir selected-upgrades dep-file-index))))
+                      (apply-mvn-upgrades! root-dir selected-upgrades dep-file-index)
+                      (when commit
+                        (auto-commit-workspace! root-dir dep-files
+                                                "chore: upgrade deps to latest (bb-depsolve)")))))
                 (println (c :dim "  Dry run. Pass --apply for interactive selection."))))))))))
 
 (defn report-cmd
@@ -803,6 +875,166 @@
                            (str/join " vs " (sort v/version-compare (seq versions)))))))
           (println))))))
 
+;; =============================================================================
+;; Workspace automation (v0.3.6+)
+;; =============================================================================
+
+(defn bump-wave-cmd
+  "Bump all workspace projects that have commits ahead of their last tag."
+  [{:keys [opts]}]
+  (let [{:keys [root apply skip-dirs org]
+         :or {root "."}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   default-skip-dirs)
+        projects (find-workspace-projects root-dir skip-set)]
+
+    (println (c :bold (format "Scanning %d projects for version bumps..." (count projects))))
+    (println)
+
+    (let [to-bump (atom [])]
+      (doseq [project-dir projects
+              :let [project (str (fs/file-name project-dir))
+                    version (str/trim (slurp (str (fs/path project-dir "VERSION"))))
+                    tag (str "v" version)
+                    ahead (git-commits-ahead (str project-dir) tag)]
+              :when (pos? ahead)]
+        (swap! to-bump conj {:project project :dir (str project-dir)
+                             :version version :ahead ahead})
+        (printf "  %-30s %s  (%d commits ahead)\n"
+                (c :cyan project) (c :dim version) ahead))
+
+      (println)
+
+      (if (empty? @to-bump)
+        (println (c :green "All projects are up to date with their tags."))
+        (do
+          (println (c :yellow (format "%d projects to bump." (count @to-bump))))
+          (println)
+          (if apply
+            (do
+              (doseq [{:keys [project dir]} @to-bump]
+                (println (c :bold (str "Bumping " project "...")))
+                (bump-cmd {:opts {:root dir :minor true}}))
+              (println)
+              (when org
+                (println (c :bold "Re-syncing workspace after bumps..."))
+                (sync-cmd {:opts {:root root :org org :apply true}})
+                (auto-commit-workspace! root-dir
+                                        (find-dep-files {:root root :skip-dirs skip-set})
+                                        "chore: sync after bump-wave (bb-depsolve)")))
+            (println (c :dim "  Dry run. Pass --apply to bump all."))))))))
+
+(defn push-all-cmd
+  "Push all workspace projects to their remotes."
+  [{:keys [opts]}]
+  (let [{:keys [root skip-dirs]
+         :or {root "."}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   default-skip-dirs)
+        projects (->> (fs/list-dir root-dir)
+                      (filter fs/directory?)
+                      (remove #(skip-path? root-dir skip-set %))
+                      (filter #(fs/exists? (fs/path % ".git")))
+                      (sort))]
+
+    (println (c :bold (format "Pushing %d projects..." (count projects))))
+    (println)
+
+    (let [pushed (atom 0)
+          skipped (atom 0)
+          failed (atom 0)]
+      (doseq [project-dir projects
+              :let [project (str (fs/file-name project-dir))
+                    dir (str project-dir)]]
+        (if-not (git-has-remote? dir)
+          (do (swap! skipped inc)
+              (println (c :dim (str "  " project " — no remote, skipped"))))
+          (let [push-result (git dir "push")
+                tag-result (git dir "push" "--tags")]
+            (if (and (zero? (:exit push-result)) (zero? (:exit tag-result)))
+              (do (swap! pushed inc)
+                  (println (c :green (str "  " project " — pushed"))))
+              (do (swap! failed inc)
+                  (println (c :yellow (str "  " project " — push failed"))))))))
+
+      (println)
+      (println (c :bold (format "Pushed: %d  Skipped: %d  Failed: %d"
+                                @pushed @skipped @failed))))))
+
+(defn release-wave-cmd
+  "Full workspace release: upgrade → lint → sync → bump → re-sync → push."
+  [{:keys [opts]}]
+  (let [{:keys [root org apply skip-dirs depth]
+         :or {root "." depth default-depth}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   default-skip-dirs)]
+
+    (when-not org
+      (println (c :red "Error: --org is required for release-wave"))
+      (System/exit 1))
+
+    (when-not apply
+      (println (c :bold "Release wave dry-run — pass --apply to execute"))
+      (println)
+      (println "  Phase 1: upgrade    — fetch latest external deps")
+      (println "  Phase 2: lint --fix — resolve :local/root to git tags")
+      (println "  Phase 3: sync       — align internal git deps to latest tags")
+      (println "  Phase 4: bump-wave  — bump all projects with commits ahead")
+      (println "  Phase 5: re-sync    — propagate new tags from bumps")
+      (println "  Phase 6: push-all   — push everything to remotes")
+      (println)
+      (println (c :dim "Pass --apply to execute the full release wave."))
+      (System/exit 0))
+
+    (let [base-opts {:root root :org org :skip-dirs skip-dirs :depth depth}]
+
+      ;; Phase 1: Upgrade external deps
+      (println (c :bold "═══ Phase 1: Upgrading external deps ═══"))
+      (println)
+      (upgrade-cmd {:opts (assoc base-opts :apply true :commit true)})
+      (println)
+
+      ;; Phase 2: Lint + fix
+      (println (c :bold "═══ Phase 2: Fixing :local/root anti-patterns ═══"))
+      (println)
+      (lint-cmd {:opts (assoc base-opts :fix true)})
+      (auto-commit-workspace! root-dir
+                              (find-dep-files {:root root :skip-dirs skip-set :depth depth})
+                              "fix: resolve :local/root deps as git tags (bb-depsolve)")
+      (println)
+
+      ;; Phase 3: Sync internal deps
+      (println (c :bold "═══ Phase 3: Syncing internal git deps ═══"))
+      (println)
+      (sync-cmd {:opts (assoc base-opts :apply true :commit true)})
+      (println)
+
+      ;; Phase 4: Bump wave
+      (println (c :bold "═══ Phase 4: Bumping all ahead projects ═══"))
+      (println)
+      (bump-wave-cmd {:opts (assoc base-opts :apply true)})
+      (println)
+
+      ;; Phase 5: Re-sync (bumps created new tags)
+      (println (c :bold "═══ Phase 5: Re-syncing after bumps ═══"))
+      (println)
+      (sync-cmd {:opts (assoc base-opts :apply true :commit true)})
+      (println)
+
+      ;; Phase 6: Push
+      (println (c :bold "═══ Phase 6: Pushing all to remotes ═══"))
+      (println)
+      (push-all-cmd {:opts base-opts})
+      (println)
+
+      (println (c :green (c :bold "Release wave complete."))))))
+
 (defn help-cmd
   "Print help text for available commands."
   [dispatch-table & _]
@@ -833,4 +1065,11 @@
   (println)
   (println (c :bold "Tree options:"))
   (println "  --tree-depth <n>   Max transitive depth (default: full resolve)")
-  (println "  --conflicts-only   Show only deps with version conflicts"))
+  (println "  --conflicts-only   Show only deps with version conflicts")
+  (println)
+  (println (c :bold "Automation options:"))
+  (println "  --commit           Auto-commit dep changes per project (for upgrade/sync/lint)")
+  (println)
+  (println (c :bold "Release-wave:"))
+  (println "  --org <name>       GitHub org (required)")
+  (println "  Runs: upgrade → lint --fix → sync → bump-wave → re-sync → push-all"))
