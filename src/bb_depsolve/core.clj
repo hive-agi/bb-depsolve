@@ -14,12 +14,8 @@
             [bblgum.core :as gum]
             [cheshire.core :as json]
             [clojure.string :as str]
-            [hive-dsl.gate :as gate]
             [hive-dsl.result :as r]
-            [hive-dsl.bounded-atom :as ba]
             [bb-depsolve.version :as v]))
-
-(def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
 
 (def ^:private colors
   {:red     "\033[31m"
@@ -701,7 +697,7 @@
   [url]
   (r/try-effect*
    :io/fetch-pom
-   (let [resp (gate/gate-run http-gate (fn [] (http/get url {:throw false})))]
+   (let [resp (http/get url {:throw false})]
      (if (= 200 (:status resp))
        (:body resp)
        (throw (ex-info "POM not found" {:url url}))))))
@@ -721,7 +717,7 @@
   (r/try-effect*
    :io/fetch-git-deps
    (let [url (format "https://raw.githubusercontent.com/%s/%s/%s/deps.edn" org repo tag)
-         resp (gate/gate-run http-gate (fn [] (http/get url {:throw false})))]
+         resp (http/get url {:throw false})]
      (if (= 200 (:status resp))
        (:body resp)
        (throw (ex-info "deps.edn not found" {:org org :repo repo :tag tag}))))))
@@ -734,22 +730,23 @@
           v/deps-edn->dep-coords))
 
 (defn resolve-dep-children
-  "Resolve children for a dep. Dispatches by lib type. Uses bounded cache.
+  "Resolve children for a dep. Dispatches by lib type. Uses cache atom.
    Returns [{:lib :version :type}]."
   [cache lib version]
   (let [key [lib version]]
-    (if-let [cached (ba/bget cache key)]
+    (if-let [cached (get @cache key)]
       cached
       (let [lib-str (str lib)
             [group artifact] (str/split lib-str #"/" 2)
             group (or group artifact)
             artifact (or artifact group)
-            children (r/let-ok [deps (if-let [{:keys [org repo]} (v/parse-github-lib lib)]
-                                       (fetch-git-dep-coords org repo version)
-                                       (fetch-pom-deps group artifact version))]
-                       (mapv #(assoc % :type (or (:type %) :mvn)) deps))
-            result (if (r/ok? children) (:ok children) [])]
-        (ba/bput! cache key result)
+            result (let [resolved (if-let [{:keys [org repo]} (v/parse-github-lib lib)]
+                                    (fetch-git-dep-coords org repo version)
+                                    (fetch-pom-deps group artifact version))]
+                     (if (r/ok? resolved)
+                       (mapv #(assoc % :type (or (:type %) :mvn)) (:ok resolved))
+                       []))]
+        (swap! cache assoc key result)
         result))))
 
 (defn tree-cmd
@@ -762,7 +759,7 @@
                    (into #{} (str/split skip-dirs #","))
                    default-skip-dirs)
         dep-files (find-dep-files {:root root :skip-dirs skip-set :depth depth})
-        cache (ba/bounded-atom {:max-entries 500})]
+        cache (atom {})]
 
     (println (c :bold "Building dependency tree..."))
     (println)
