@@ -359,6 +359,70 @@
                 (= triple (v/parse-semver (v/semver->version triple)))))
 
 ;; =============================================================================
+;; P21: group-id->path totality
+;; =============================================================================
+
+(defspec p21-group-id-path-dots-to-slashes 200
+  (prop/for-all [group (gen/elements ["com.fasterxml" "org.clojure" "cheshire" "a.b.c.d"])]
+                (let [path (v/group-id->path group)]
+                  (and (string? path)
+                       (not (clojure.string/includes? path "."))
+                       (= (count (filter #(= % \/) path))
+                          (count (filter #(= % \.) group)))))))
+
+;; =============================================================================
+;; P22: parse-pom-deps totality (never throws)
+;; =============================================================================
+
+(props/defprop-total p22-parse-pom-deps-totality
+  v/parse-pom-deps gen/string-alphanumeric)
+
+;; =============================================================================
+;; P23: deps-edn->dep-coords totality (never throws)
+;; =============================================================================
+
+(props/defprop-total p23-deps-edn-dep-coords-totality
+  v/deps-edn->dep-coords gen/string-alphanumeric)
+
+;; =============================================================================
+;; P24: find-conflicts returns only multi-version entries
+;; =============================================================================
+
+(defspec p24-find-conflicts-only-multi-version 100
+  (prop/for-all [libs (gen/vector (gen/tuple gen-lib-sym gen-version-string) 1 10)]
+                (let [tree (mapv (fn [[lib ver]]
+                                  {:lib lib :version ver :children []})
+                                libs)
+                      conflicts (v/find-conflicts tree)]
+                  (every? (fn [[_ vs]] (> (count vs) 1)) conflicts))))
+
+;; =============================================================================
+;; P25: maven-property? never matches plain version strings
+;; =============================================================================
+
+(defspec p25-maven-property-rejects-plain-versions 200
+  (prop/for-all [v gen-version-string]
+                (false? (v/maven-property? v))))
+
+(defspec p25-maven-property-rejects-semver-tags 200
+  (prop/for-all [v gen-semver-tag]
+                (false? (v/maven-property? v))))
+
+(defspec p25-maven-property-rejects-pre-release 200
+  (prop/for-all [v gen-pre-release-version]
+                (false? (v/maven-property? v))))
+
+(def gen-maven-property
+  "Generate a Maven property placeholder like ${foo.bar}."
+  (gen/fmap (fn [s] (str "${" s "}"))
+            (gen/elements ["clojure.version" "project.version" "jackson.version"
+                           "foo" "a.b.c" "version"])))
+
+(defspec p25-maven-property-accepts-placeholders 200
+  (prop/for-all [prop gen-maven-property]
+                (true? (v/maven-property? prop))))
+
+;; =============================================================================
 ;; P20: bumped version is always strictly newer
 ;; =============================================================================
 

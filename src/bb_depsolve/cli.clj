@@ -27,6 +27,8 @@
     :doc "Detect dep anti-patterns (:local/root, etc.)"}
    {:cmds ["bump"]    :fn (wrap-help core/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
+   {:cmds ["tree"]    :fn (wrap-help core/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
+    :doc "Show transitive dependency tree with conflict detection"}
    {:cmds []          :fn (fn [_] (core/help-cmd dispatch-table))}])
 
 (defn -main [& args]
@@ -34,9 +36,11 @@
                 {:coerce {:apply :boolean
                           :fix :boolean
                           :pre-release :boolean
+                          :conflicts-only :boolean
                           :help :boolean
                           :major :boolean
                           :minor :boolean
                           :stable :boolean
                           :sync :boolean
-                          :depth :long}}))
+                          :depth :long
+                          :tree-depth :long}}))

@@ -14,8 +14,12 @@
             [bblgum.core :as gum]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [hive-dsl.gate :as gate]
             [hive-dsl.result :as r]
+            [hive-dsl.bounded-atom :as ba]
             [bb-depsolve.version :as v]))
+
+(def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
 
 (def ^:private colors
   {:red     "\033[31m"
@@ -688,6 +692,116 @@
 
         (println (c :green (str "Done: " new-tag)))))))
 
+;; =============================================================================
+;; Transitive dependency resolution (v0.5.0)
+;; =============================================================================
+
+(defn- fetch-pom-xml
+  "Fetch POM XML from a URL. Returns Result<string>."
+  [url]
+  (r/try-effect*
+   :io/fetch-pom
+   (let [resp (gate/gate-run http-gate (fn [] (http/get url {:throw false})))]
+     (if (= 200 (:status resp))
+       (:body resp)
+       (throw (ex-info "POM not found" {:url url}))))))
+
+(defn fetch-pom-deps
+  "Fetch and parse POM for a Maven artifact. Tries Clojars then Maven Central.
+   Returns Result<[{:lib :version}]>."
+  [group-id artifact-id version]
+  (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
+        pom-xml (let [r1 (fetch-pom-xml clojars-url)]
+                  (if (r/ok? r1) r1 (fetch-pom-xml maven-url)))]
+    (r/ok-> pom-xml v/parse-pom-deps)))
+
+(defn- fetch-git-deps-edn
+  "Fetch raw deps.edn content from GitHub. Returns Result<string>."
+  [org repo tag]
+  (r/try-effect*
+   :io/fetch-git-deps
+   (let [url (format "https://raw.githubusercontent.com/%s/%s/%s/deps.edn" org repo tag)
+         resp (gate/gate-run http-gate (fn [] (http/get url {:throw false})))]
+     (if (= 200 (:status resp))
+       (:body resp)
+       (throw (ex-info "deps.edn not found" {:org org :repo repo :tag tag}))))))
+
+(defn fetch-git-dep-coords
+  "Fetch deps.edn from GitHub raw content for a git dep.
+   Returns Result<[{:lib :version :type}]>."
+  [org repo tag]
+  (r/ok-> (fetch-git-deps-edn org repo tag)
+          v/deps-edn->dep-coords))
+
+(defn resolve-dep-children
+  "Resolve children for a dep. Dispatches by lib type. Uses bounded cache.
+   Returns [{:lib :version :type}]."
+  [cache lib version]
+  (let [key [lib version]]
+    (if-let [cached (ba/bget cache key)]
+      cached
+      (let [lib-str (str lib)
+            [group artifact] (str/split lib-str #"/" 2)
+            group (or group artifact)
+            artifact (or artifact group)
+            children (r/let-ok [deps (if-let [{:keys [org repo]} (v/parse-github-lib lib)]
+                                       (fetch-git-dep-coords org repo version)
+                                       (fetch-pom-deps group artifact version))]
+                       (mapv #(assoc % :type (or (:type %) :mvn)) deps))
+            result (if (r/ok? children) (:ok children) [])]
+        (ba/bput! cache key result)
+        result))))
+
+(defn tree-cmd
+  "Show transitive dependency tree with conflict detection."
+  [{:keys [opts]}]
+  (let [{:keys [root skip-dirs depth tree-depth conflicts-only]
+         :or {root "." depth default-depth}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   default-skip-dirs)
+        dep-files (find-dep-files {:root root :skip-dirs skip-set :depth depth})
+        cache (ba/bounded-atom {:max-entries 500})]
+
+    (println (c :bold "Building dependency tree..."))
+    (println)
+
+    (doseq [{:keys [path project] :as dep-file} dep-files
+            :let [content (slurp path)
+                  mvn-deps (extract-mvn-deps dep-file content)
+                  git-deps (if (shadow-deps-file? dep-file)
+                             []
+                             (v/find-git-deps content))]]
+
+      (let [direct-deps (vec (concat
+                              (mapv (fn [{:keys [lib version]}]
+                                      {:lib lib :version version :type :mvn})
+                                    mvn-deps)
+                              (mapv (fn [{:keys [lib tag]}]
+                                      {:lib lib :version tag :type :git})
+                                    git-deps)))
+            resolve-fn (fn [lib version]
+                         (resolve-dep-children cache lib version))
+            tree (v/build-dep-tree direct-deps resolve-fn tree-depth)
+            conflicts (v/find-conflicts tree)]
+
+        (when (or (not conflicts-only) (seq conflicts))
+          (println (c :bold (c :cyan project))
+                   (c :dim (str " (" (str (fs/relativize root-dir path)) ")")))
+
+          (when-not conflicts-only
+            (let [lines (v/format-dep-tree tree conflicts)]
+              (doseq [line lines] (println line))))
+
+          (when (seq conflicts)
+            (when-not conflicts-only (println))
+            (println (c :yellow (str "  " (count conflicts) " conflict(s):")))
+            (doseq [[lib versions] (sort-by (comp str key) conflicts)]
+              (println (str "    " (c :yellow (str lib)) " — "
+                           (str/join " vs " (sort v/version-compare (seq versions)))))))
+          (println))))))
+
 (defn help-cmd
   "Print help text for available commands."
   [dispatch-table & _]
@@ -714,4 +828,8 @@
   (println)
   (println (c :bold "Lint options:"))
   (println "  --fix              Auto-fix: split :local/root into local.deps.edn")
-  (println "  --org <name>       GitHub org for resolving internal deps (used with --fix)"))
+  (println "  --org <name>       GitHub org for resolving internal deps (used with --fix)")
+  (println)
+  (println (c :bold "Tree options:"))
+  (println "  --tree-depth <n>   Max transitive depth (default: full resolve)")
+  (println "  --conflicts-only   Show only deps with version conflicts"))

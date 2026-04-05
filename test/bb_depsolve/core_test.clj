@@ -281,3 +281,243 @@
     (is (= "1.2.3" (v/semver->version [1 2 3])))
     (is (= "0.0.0" (v/semver->version [0 0 0])))
     (is (= "10.20.30" (v/semver->version [10 20 30])))))
+
+;; =============================================================================
+;; Transitive dependency resolution (v0.5.0)
+;; =============================================================================
+
+(deftest maven-property?-test
+  (testing "detects Maven property placeholders"
+    (is (true? (v/maven-property? "${clojure.version}")))
+    (is (true? (v/maven-property? "${project.version}")))
+    (is (true? (v/maven-property? "${jackson.version}")))
+    (is (true? (v/maven-property? "${foo}"))))
+
+  (testing "rejects normal version strings"
+    (is (false? (v/maven-property? "1.0.0")))
+    (is (false? (v/maven-property? "2.17.0")))
+    (is (false? (v/maven-property? "1.0.0-SNAPSHOT")))
+    (is (false? (v/maven-property? "v0.4.0"))))
+
+  (testing "rejects nil and empty"
+    (is (false? (v/maven-property? nil)))
+    (is (false? (v/maven-property? ""))))
+
+  (testing "rejects partial placeholders"
+    (is (false? (v/maven-property? "${}")))
+    (is (false? (v/maven-property? "$foo")))
+    (is (false? (v/maven-property? "foo${bar}")))
+    (is (false? (v/maven-property? "${bar}baz")))))
+
+(deftest parse-pom-deps-filters-maven-properties-test
+  (testing "filters out deps with unresolved Maven property versions"
+    (let [pom "<?xml version=\"1.0\"?>
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <version>2.17.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojure</artifactId>
+      <version>${clojure.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>some.group</groupId>
+      <artifactId>some-lib</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
+</project>"
+          deps (v/parse-pom-deps pom)]
+      (is (= 1 (count deps)))
+      (is (= 'com.fasterxml.jackson.core/jackson-core (:lib (first deps))))
+      (is (= "2.17.0" (:version (first deps))))))
+
+  (testing "keeps all deps when none use property placeholders"
+    (let [pom "<?xml version=\"1.0\"?>
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojure</artifactId>
+      <version>1.11.1</version>
+    </dependency>
+    <dependency>
+      <groupId>cheshire</groupId>
+      <artifactId>cheshire</artifactId>
+      <version>5.13.0</version>
+    </dependency>
+  </dependencies>
+</project>"
+          deps (v/parse-pom-deps pom)]
+      (is (= 2 (count deps))))))
+
+(deftest group-id->path-test
+  (testing "converts dots to slashes"
+    (is (= "com/fasterxml/jackson/core" (v/group-id->path "com.fasterxml.jackson.core"))))
+  (testing "simple group"
+    (is (= "cheshire" (v/group-id->path "cheshire"))))
+  (testing "nil returns empty string"
+    (is (= "" (v/group-id->path nil)))))
+
+(deftest pom-urls-test
+  (testing "generates clojars and maven central URLs"
+    (let [[clojars maven] (v/pom-urls "cheshire" "cheshire" "6.1.0")]
+      (is (str/includes? clojars "repo.clojars.org"))
+      (is (str/includes? clojars "cheshire/cheshire/6.1.0/cheshire-6.1.0.pom"))
+      (is (str/includes? maven "repo1.maven.org"))
+      (is (str/includes? maven "cheshire/cheshire/6.1.0/cheshire-6.1.0.pom"))))
+  (testing "nested group path"
+    (let [[clojars _] (v/pom-urls "com.fasterxml.jackson.core" "jackson-core" "2.20.0")]
+      (is (str/includes? clojars "com/fasterxml/jackson/core/jackson-core/2.20.0")))))
+
+(deftest parse-pom-deps-test
+  (testing "parses compile-scope deps from POM XML"
+    (let [pom "<?xml version=\"1.0\"?>
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <version>2.17.0</version>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>"
+          deps (v/parse-pom-deps pom)]
+      (is (= 1 (count deps)))
+      (is (= 'com.fasterxml.jackson.core/jackson-core (:lib (first deps))))
+      (is (= "2.17.0" (:version (first deps))))))
+
+  (testing "skips optional deps"
+    (let [pom "<?xml version=\"1.0\"?>
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojure</artifactId>
+      <version>1.12.0</version>
+    </dependency>
+    <dependency>
+      <groupId>opt</groupId>
+      <artifactId>opt-lib</artifactId>
+      <version>1.0</version>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+</project>"
+          deps (v/parse-pom-deps pom)]
+      (is (= 1 (count deps)))
+      (is (= 'org.clojure/clojure (:lib (first deps))))))
+
+  (testing "returns empty for nil"
+    (is (= [] (v/parse-pom-deps nil))))
+
+  (testing "returns empty for garbage input"
+    (is (= [] (v/parse-pom-deps "not xml at all")))))
+
+(deftest deps-edn->dep-coords-test
+  (testing "extracts mvn deps"
+    (let [edn-str "{:deps {cheshire/cheshire {:mvn/version \"6.1.0\"}}}"
+          deps (v/deps-edn->dep-coords edn-str)]
+      (is (= 1 (count deps)))
+      (is (= 'cheshire/cheshire (:lib (first deps))))
+      (is (= "6.1.0" (:version (first deps))))
+      (is (= :mvn (:type (first deps))))))
+
+  (testing "extracts git deps"
+    (let [edn-str "{:deps {io.github.hive-agi/hive-dsl {:git/tag \"v0.3.7\" :git/sha \"abc\"}}}"
+          deps (v/deps-edn->dep-coords edn-str)]
+      (is (= 1 (count deps)))
+      (is (= 'io.github.hive-agi/hive-dsl (:lib (first deps))))
+      (is (= "v0.3.7" (:version (first deps))))
+      (is (= :git (:type (first deps))))))
+
+  (testing "skips local/root deps"
+    (let [edn-str "{:deps {foo/bar {:local/root \"../bar\"}}}"
+          deps (v/deps-edn->dep-coords edn-str)]
+      (is (= 0 (count deps)))))
+
+  (testing "returns empty for nil"
+    (is (= [] (v/deps-edn->dep-coords nil)))))
+
+(deftest build-dep-tree-test
+  (testing "builds tree with mock resolver"
+    (let [resolve-fn (fn [lib _version]
+                       (case (str lib)
+                         "a/a" [{:lib 'b/b :version "1.0" :type :mvn}]
+                         "b/b" [{:lib 'c/c :version "2.0" :type :mvn}]
+                         []))
+          deps [{:lib 'a/a :version "1.0" :type :mvn}]
+          tree (v/build-dep-tree deps resolve-fn 3)]
+      (is (= 1 (count tree)))
+      (is (= 'a/a (:lib (first tree))))
+      (is (= 1 (count (:children (first tree)))))
+      (is (= 'b/b (:lib (first (:children (first tree))))))
+      (is (= 1 (count (:children (first (:children (first tree)))))))))
+
+  (testing "respects max depth"
+    (let [resolve-fn (fn [_ _] [{:lib 'deep/dep :version "1.0" :type :mvn}])
+          deps [{:lib 'a/a :version "1.0" :type :mvn}]
+          tree (v/build-dep-tree deps resolve-fn 1)]
+      (is (= 1 (count (:children (first tree)))))
+      (is (= [] (:children (first (:children (first tree))))))))
+
+  (testing "detects cycles"
+    (let [resolve-fn (fn [lib _]
+                       (case (str lib)
+                         "a/a" [{:lib 'b/b :version "1.0" :type :mvn}]
+                         "b/b" [{:lib 'a/a :version "1.0" :type :mvn}]
+                         []))
+          deps [{:lib 'a/a :version "1.0" :type :mvn}]
+          tree (v/build-dep-tree deps resolve-fn 5)]
+      (let [b-node (first (:children (first tree)))
+            a-cycle (first (:children b-node))]
+        (is (= 'a/a (:lib a-cycle)))
+        (is (true? (:cycle? a-cycle)))
+        (is (= [] (:children a-cycle)))))))
+
+(deftest find-conflicts-test
+  (testing "finds version conflicts"
+    (let [tree [{:lib 'a/a :version "1.0" :children
+                 [{:lib 'c/c :version "1.0" :children []}]}
+                {:lib 'b/b :version "2.0" :children
+                 [{:lib 'c/c :version "2.0" :children []}]}]
+          conflicts (v/find-conflicts tree)]
+      (is (= 1 (count conflicts)))
+      (is (= #{"1.0" "2.0"} (get conflicts 'c/c)))))
+
+  (testing "no conflicts when versions agree"
+    (let [tree [{:lib 'a/a :version "1.0" :children
+                 [{:lib 'c/c :version "1.0" :children []}]}
+                {:lib 'b/b :version "2.0" :children
+                 [{:lib 'c/c :version "1.0" :children []}]}]
+          conflicts (v/find-conflicts tree)]
+      (is (empty? conflicts))))
+
+  (testing "empty tree has no conflicts"
+    (is (empty? (v/find-conflicts [])))))
+
+(deftest format-dep-tree-test
+  (testing "formats simple tree"
+    (let [tree [{:lib 'a/a :version "1.0" :children
+                 [{:lib 'b/b :version "2.0" :children [] :cycle? false}]
+                 :cycle? false}]
+          lines (v/format-dep-tree tree {})]
+      (is (= 2 (count lines)))
+      (is (str/includes? (first lines) "a/a"))
+      (is (str/includes? (second lines) "b/b"))))
+
+  (testing "marks cycles"
+    (let [tree [{:lib 'a/a :version "1.0" :cycle? true :children []}]
+          lines (v/format-dep-tree tree {})]
+      (is (= 1 (count lines)))
+      (is (str/includes? (first lines) "cycle")))))

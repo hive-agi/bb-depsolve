@@ -4,7 +4,9 @@
    Layer 1 (Calculation): Zero side effects, zero I/O deps.
    All functions are total over their documented domains.
    Sits at the bottom of the dependency stack — innermost onion layer."
-  (:require [clojure.string :as str]))
+  (:require [clojure.data.xml :as xml]
+            [clojure.edn :as edn]
+            [clojure.string :as str]))
 
 (defn parse-semver
   "Parse a semver tag like 'v0.4.0' into [major minor patch].
@@ -248,3 +250,146 @@
   "Extract artifact-id from a qualified lib symbol."
   [lib-sym]
   (last (str/split (str lib-sym) #"/")))
+
+;; =============================================================================
+;; Transitive dependency resolution (v0.5.0)
+;; =============================================================================
+
+(defn maven-property?
+  "True if s is an unresolved Maven property placeholder like ${foo.bar}.
+   Total: returns false for nil/non-string."
+  [s]
+  (boolean (and (string? s) (re-matches #"\$\{[^}]+\}" s))))
+
+(defn group-id->path
+  "Convert Maven groupId to URL path segment.
+   \"com.fasterxml.jackson.core\" -> \"com/fasterxml/jackson/core\"
+   Total: returns empty string for nil."
+  [group-id]
+  (if (string? group-id)
+    (str/replace group-id "." "/")
+    ""))
+
+(defn pom-urls
+  "Return [clojars-url maven-central-url] for a Maven artifact.
+   Pure: computes URL strings only."
+  [group-id artifact-id version]
+  (let [gpath (group-id->path group-id)
+        fname (str artifact-id "-" version ".pom")]
+    [(format "https://repo.clojars.org/%s/%s/%s/%s" gpath artifact-id version fname)
+     (format "https://repo1.maven.org/maven2/%s/%s/%s/%s" gpath artifact-id version fname)]))
+
+(defn parse-pom-deps
+  "Parse POM XML string, extract compile-scope dependencies.
+   Returns vec of {:lib :version}. Skips test/provided/system/optional deps.
+   Total: returns [] for nil/unparseable input."
+  [xml-string]
+  (try
+    (let [parsed (xml/parse-str xml-string)
+          tag-name (fn [el] (when (keyword? (:tag el)) (keyword (name (:tag el)))))
+          find-el (fn [parent tag-kw]
+                    (first (filter #(= (tag-name %) tag-kw) (:content parent))))
+          text (fn [el] (when el (str/trim (apply str (filter string? (:content el))))))
+          deps-el (find-el parsed :dependencies)]
+      (if deps-el
+        (->> (:content deps-el)
+             (filter #(= (tag-name %) :dependency))
+             (keep (fn [dep]
+                     (let [group (text (find-el dep :groupId))
+                           artifact (text (find-el dep :artifactId))
+                           version (text (find-el dep :version))
+                           scope (or (text (find-el dep :scope)) "compile")
+                           optional (text (find-el dep :optional))]
+                       (when (and group artifact version
+                                  (not (maven-property? version))
+                                  (= scope "compile")
+                                  (not= optional "true"))
+                         {:lib (symbol (str group "/" artifact))
+                          :version version}))))
+             (vec))
+        []))
+    (catch Exception _ [])))
+
+(defn deps-edn->dep-coords
+  "Parse deps.edn string, extract dependency coordinates from :deps.
+   Returns vec of {:lib :version :type} where type is :mvn or :git.
+   Total: returns [] for nil/unparseable input."
+  [edn-string]
+  (try
+    (let [parsed (edn/read-string edn-string)
+          deps (:deps parsed)]
+      (->> deps
+           (keep (fn [[lib-sym coord]]
+                   (cond
+                     (:mvn/version coord)
+                     {:lib lib-sym :version (:mvn/version coord) :type :mvn}
+
+                     (:git/tag coord)
+                     {:lib lib-sym :version (:git/tag coord) :type :git}
+
+                     :else nil)))
+           (vec)))
+    (catch Exception _ [])))
+
+(defn build-dep-tree
+  "Build a transitive dependency tree from a list of direct deps.
+   resolve-fn: (fn [lib version] -> [{:lib :version :type}]) returns children.
+   max-depth: recursion limit (0 = direct deps only, no children resolved).
+   seen: set of already-visited [lib version] to avoid cycles.
+   Returns vec of tree nodes: {:lib :version :type :children [...] :cycle? bool}."
+  ([deps resolve-fn max-depth]
+   (build-dep-tree deps resolve-fn max-depth 0 #{}))
+  ([deps resolve-fn max-depth current-depth seen]
+   (->> deps
+        (mapv (fn [{:keys [lib version type] :as dep}]
+                (let [key [lib version]]
+                  (if (or (and max-depth (>= current-depth max-depth))
+                          (contains? seen key))
+                    (assoc dep :children [] :cycle? (contains? seen key))
+                    (let [children (resolve-fn lib version)
+                          child-tree (build-dep-tree children resolve-fn max-depth
+                                                     (inc current-depth)
+                                                     (conj seen key))]
+                      (assoc dep :children child-tree :cycle? false)))))))))
+
+(defn find-conflicts
+  "Walk a dep tree, find libs appearing with multiple versions.
+   Returns map of {lib -> #{versions}} for conflicting libs only."
+  [trees]
+  (let [versions (atom {})]
+    (letfn [(walk [nodes]
+              (doseq [{:keys [lib version children]} nodes]
+                (swap! versions update lib (fnil conj #{}) version)
+                (walk children)))]
+      (walk trees))
+    (->> @versions
+         (filter (fn [[_ vs]] (> (count vs) 1)))
+         (into {}))))
+
+(defn format-dep-tree
+  "Format dependency tree as indented string lines with ANSI colors.
+   conflicts: map from find-conflicts. seen: tracks already-printed deps.
+   Returns vec of formatted strings (one per line)."
+  ([trees conflicts]
+   (format-dep-tree trees conflicts 0 (atom #{})))
+  ([trees conflicts indent-level seen]
+   (let [indent (apply str (repeat (* 2 indent-level) \space))]
+     (->> trees
+          (mapcat (fn [{:keys [lib version children cycle?]}]
+                    (let [conflict? (contains? conflicts lib)
+                          seen? (contains? @seen [lib version])
+                          _ (swap! seen conj [lib version])
+                          version-str (cond
+                                        conflict? (str "\033[33m" version "\033[0m")
+                                        :else     (str "\033[2m" version "\033[0m"))
+                          suffix (cond
+                                   cycle?  (str " \033[2m(cycle)\033[0m")
+                                   seen?   (str " \033[2m(already seen)\033[0m")
+                                   :else   "")
+                          line (str indent (str lib) " " version-str suffix)]
+                      (if (or cycle? seen?)
+                        [line]
+                        (into [line]
+                              (format-dep-tree children conflicts
+                                               (inc indent-level) seen))))))
+          (vec)))))
