@@ -29,6 +29,8 @@
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help core/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
     :doc "Show transitive dependency tree with conflict detection"}
+   {:cmds ["audit"]   :fn (wrap-help core/audit-cmd   "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
+    :doc "Scan dependencies for known CVEs (via OSV.dev)"}
    {:cmds ["bump-wave"]    :fn (wrap-help core/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
     :doc "Bump all projects with commits ahead of their tag"}
    {:cmds ["push-all"]     :fn (wrap-help core/push-all-cmd     "push-all"     "Push all workspace projects to remotes")
