@@ -2,6 +2,7 @@
   "CLI entry point for bb-depsolve.
    Dispatches to core commands via babashka.cli."
   (:require [babashka.cli :as cli]
+            [bb-depsolve.audit :as audit]
             [bb-depsolve.core :as core]))
 
 (defn- wrap-help
@@ -29,7 +30,7 @@
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help core/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
     :doc "Show transitive dependency tree with conflict detection"}
-   {:cmds ["audit"]   :fn (wrap-help core/audit-cmd   "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
+   {:cmds ["audit"]   :fn (wrap-help audit/audit-cmd  "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
     :doc "Scan dependencies for known CVEs (via OSV.dev)"}
    {:cmds ["bump-wave"]    :fn (wrap-help core/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
     :doc "Bump all projects with commits ahead of their tag"}
