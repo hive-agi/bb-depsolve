@@ -3,7 +3,8 @@
    Dispatches to core commands via babashka.cli."
   (:require [babashka.cli :as cli]
             [bb-depsolve.audit :as audit]
-            [bb-depsolve.core :as core]))
+            [bb-depsolve.core :as core]
+            [bb-depsolve.wave :as wave]))
 
 (defn- wrap-help
   "Wrap a command fn so --help prints subcommand usage instead of executing."
@@ -32,13 +33,13 @@
     :doc "Show transitive dependency tree with conflict detection"}
    {:cmds ["audit"]   :fn (wrap-help audit/audit-cmd  "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
     :doc "Scan dependencies for known CVEs (via OSV.dev)"}
-   {:cmds ["bump-wave"]    :fn (wrap-help core/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
+   {:cmds ["bump-wave"]    :fn (wrap-help wave/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
     :doc "Bump all projects with commits ahead of their tag"}
-   {:cmds ["push-all"]     :fn (wrap-help core/push-all-cmd     "push-all"     "Push all workspace projects to remotes")
+   {:cmds ["push-all"]     :fn (wrap-help wave/push-all-cmd     "push-all"     "Push all workspace projects to remotes")
     :doc "Push all workspace projects to remotes"}
-   {:cmds ["release-wave"] :fn (wrap-help core/release-wave-cmd "release-wave" "Full release: upgrade → lint → sync → bump → push")
+   {:cmds ["release-wave"] :fn (wrap-help wave/release-wave-cmd "release-wave" "Full release: upgrade → lint → sync → bump → push")
     :doc "Full release: upgrade → lint → sync → bump → push"}
-   {:cmds []          :fn (fn [_] (core/help-cmd dispatch-table))}])
+   {:cmds []          :fn (fn [_] (wave/help-cmd dispatch-table))}])
 
 (defn -main [& args]
   (cli/dispatch dispatch-table args
