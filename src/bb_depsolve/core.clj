@@ -17,31 +17,12 @@
             [hive-dsl.bounded-atom :as ba]
             [hive-dsl.gate :as gate]
             [hive-dsl.result :as r]
-            [bb-depsolve.version :as v]))
+            [bb-depsolve.version :as v]
+            [bb-depsolve.ui :as ui]))
+
+(declare c gum-table gum-filter pad-right visible-len matrix->csv tty? colors format-local-dep-warning)
 
 (def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
-
-(def ^:private colors
-  {:red     "\033[31m"
-   :green   "\033[32m"
-   :yellow  "\033[33m"
-   :cyan    "\033[36m"
-   :bold    "\033[1m"
-   :dim     "\033[2m"
-   :reset   "\033[0m"})
-
-(defn c
-  "Public: wrap STRING in ANSI color code. Used by sibling nses (audit, etc)."
-  [color & parts]
-  (str (get colors color "") (apply str parts) (:reset colors)))
-
-(defn- visible-len [s]
-  (count (str/replace s #"\033\[[0-9;]*m" "")))
-
-(defn- pad-right [s width]
-  (let [vlen (visible-len s)
-        padding (max 0 (- width vlen))]
-    (str s (apply str (repeat padding \space)))))
 
 ;; =============================================================================
 ;; Git helpers (auto-commit, push, workspace ops)
@@ -325,50 +306,6 @@
     (println (c :green (format "Applied %d upgrades across %d files."
                                (count upgrades) (count by-file))))))
 
-(defn- tty? []
-  (zero? (:exit (proc/sh ["test" "-t" "0"] {:continue true}))))
-
-(defn- matrix->csv [multi-project all-projects]
-  (let [header (str/join "," (cons "Library" all-projects))
-        rows (for [[lib project-versions] multi-project]
-               (str/join ","
-                         (cons (str lib)
-                               (for [p all-projects]
-                                 (or (get project-versions p) "-")))))]
-    (str/join "\n" (cons header rows))))
-
-(defn- gum-table [csv multi-project all-projects]
-  (if (tty?)
-    (gum/gum :table :in (.getBytes csv))
-    (let [lib-col 45
-          ver-col 13
-          abbrev (fn [s w] (subs s 0 (min w (count s))))]
-      (print (pad-right "Library" lib-col))
-      (doseq [p all-projects]
-        (print "  " (pad-right (abbrev p ver-col) ver-col)))
-      (println)
-      (println (apply str (repeat (+ lib-col (* (+ 2 ver-col) (count all-projects))) \-)))
-      (doseq [[lib project-versions] multi-project
-              :let [versions (set (vals project-versions))
-                    drift? (> (count versions) 1)]]
-        (print (pad-right (str lib) lib-col))
-        (doseq [p all-projects
-                :let [v* (get project-versions p)
-                      display (if v* (abbrev v* ver-col) "-")
-                      colored (cond
-                                (nil? v*) (c :dim "-")
-                                drift?    (c :yellow display)
-                                :else     (c :dim display))]]
-          (print "  " (pad-right colored ver-col)))
-        (println)))))
-
-(defn- gum-filter [choices header]
-  (when (tty?)
-    (let [{:keys [status result]} (gum/gum :filter choices
-                                           :no-limit true
-                                           :header header)]
-      (when (= 0 status) result))))
-
 (defn sync-cmd
   "Sync internal git deps across all workspace projects."
   [{:keys [opts]}]
@@ -561,12 +498,6 @@
                                 (count multi-project) drift-count)))
       (println)
       (gum-table csv multi-project all-projects))))
-
-(defn- format-local-dep-warning
-  "Format a warning line for a :local/root dep."
-  [project lib path]
-  (format "  %-25s %-35s %s"
-          (c :cyan project) (str lib) (c :yellow path)))
 
 (defn- ensure-gitignore-entry!
   "Add entry to .gitignore if not already present."
@@ -785,14 +716,32 @@
        (:body resp)
        (throw (ex-info "POM not found" {:url url}))))))
 
+(defn- warn-unresolved-coord
+  "I/O boundary warn-fn for coordinates dropped because they still contain
+   `${...}` property placeholders. Emits a single yellow warning line.
+   Keeps the Calculation layer (version.clj) free of logging deps."
+  [parent-coord coord]
+  (println (c :yellow
+              (format "[bb-depsolve] WARN: dropping unresolved Maven property coord %s (from %s)"
+                      (pr-str coord)
+                      (pr-str parent-coord)))))
+
 (defn fetch-pom-deps
   "Fetch and parse POM for a Maven artifact. Tries Clojars then Maven Central.
+   Filters out coords whose key fields still contain `${...}` placeholders
+   AFTER POM parsing (see bb-depsolve.version/filter-resolved-coords). Dropped
+   coords are logged via `warn-unresolved-coord` (not silently swallowed).
    Returns Result<[{:lib :version}]>."
   [group-id artifact-id version]
   (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
         pom-xml (let [r1 (fetch-pom-xml clojars-url)]
-                  (if (r/ok? r1) r1 (fetch-pom-xml maven-url)))]
-    (r/ok-> pom-xml v/parse-pom-deps)))
+                  (if (r/ok? r1) r1 (fetch-pom-xml maven-url)))
+        parent  {:group group-id :artifact artifact-id :version version}
+        warn-fn (partial warn-unresolved-coord parent)
+        filter-step (fn [coords] (v/filter-resolved-coords coords warn-fn))]
+    (r/ok-> pom-xml
+            v/parse-pom-deps-raw
+            filter-step)))
 
 (defn- fetch-git-deps-edn
   "Fetch raw deps.edn content from GitHub. Returns Result<string>."
@@ -883,3 +832,21 @@
           (println))))))
 
 ;; Workspace automation extracted to bb-depsolve.wave (v0.7.0 refactor)
+
+(def c bb-depsolve.ui/c)
+
+(def ^:private gum-table bb-depsolve.ui/gum-table)
+
+(def ^:private gum-filter bb-depsolve.ui/gum-filter)
+
+(def ^:private pad-right bb-depsolve.ui/pad-right)
+
+(def ^:private visible-len bb-depsolve.ui/visible-len)
+
+(def ^:private matrix->csv bb-depsolve.ui/matrix->csv)
+
+(def ^:private tty? bb-depsolve.ui/tty?)
+
+(def ^:private colors bb-depsolve.ui/colors)
+
+(def ^:private format-local-dep-warning bb-depsolve.ui/format-local-dep-warning)
