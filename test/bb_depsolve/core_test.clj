@@ -309,6 +309,96 @@
     (is (false? (v/maven-property? "foo${bar}")))
     (is (false? (v/maven-property? "${bar}baz")))))
 
+(deftest unresolved-property?-test
+  (testing "string arity — detects ${...} placeholders anywhere"
+    (is (true?  (v/unresolved-property? "${foo}")))
+    (is (true?  (v/unresolved-property? "${clojure.version}")))
+    (is (true?  (v/unresolved-property? "foo-${bar}-baz")))
+    (is (false? (v/unresolved-property? "1.2.3")))
+    (is (false? (v/unresolved-property? "v0.4.0")))
+    (is (false? (v/unresolved-property? "1.0.0-SNAPSHOT")))
+    (is (false? (v/unresolved-property? ""))))
+
+  (testing "nil and non-string/non-map inputs return false (total)"
+    (is (false? (v/unresolved-property? nil)))
+    (is (false? (v/unresolved-property? 42)))
+    (is (false? (v/unresolved-property? [])))
+    (is (false? (v/unresolved-property? :kw))))
+
+  (testing "coord-map arity — checks key fields"
+    (is (true?  (v/unresolved-property? {:lib 'org.clojure/clojure
+                                         :version "${clojure.version}"})))
+    (is (true?  (v/unresolved-property? {:group "${parent.groupId}"
+                                         :artifact "foo" :version "1.0"})))
+    (is (true?  (v/unresolved-property? {:artifact "${name}" :version "1.0"})))
+    (is (false? (v/unresolved-property? {:lib 'cheshire/cheshire :version "5.13.0"})))
+    (is (false? (v/unresolved-property? {:group "org.clojure" :artifact "clojure"
+                                         :version "1.12.0"})))))
+
+(deftest filter-resolved-coords-test
+  (testing "drops coords with unresolved ${...} and keeps resolved"
+    (let [coords [{:lib 'a/a :version "1.0.0"}
+                  {:lib 'b/b :version "${b.version}"}
+                  {:lib 'c/c :version "2.0.0"}
+                  {:lib 'd/d :version "${d.version}"}]
+          filtered (v/filter-resolved-coords coords)]
+      (is (= 2 (count filtered)))
+      (is (= #{'a/a 'c/c} (set (map :lib filtered))))))
+
+  (testing "preserves order of resolved coords"
+    (let [coords [{:lib 'a/a :version "1.0"}
+                  {:lib 'b/b :version "${x}"}
+                  {:lib 'c/c :version "2.0"}]]
+      (is (= ['a/a 'c/c]
+             (mapv :lib (v/filter-resolved-coords coords))))))
+
+  (testing "2-arity warn-fn is invoked once per dropped coord"
+    (let [warnings (atom [])
+          warn-fn  #(swap! warnings conj %)
+          coords   [{:lib 'ok/ok :version "1.0"}
+                    {:lib 'bad/one :version "${v1}"}
+                    {:lib 'bad/two :version "${v2}"}]
+          filtered (v/filter-resolved-coords coords warn-fn)]
+      (is (= 1 (count filtered)))
+      (is (= 2 (count @warnings)))
+      (is (= #{'bad/one 'bad/two} (set (map :lib @warnings))))))
+
+  (testing "empty / nil inputs are total"
+    (is (= [] (v/filter-resolved-coords [])))
+    (is (= [] (v/filter-resolved-coords nil))))
+
+  (testing "idempotent — filtering twice equals filtering once"
+    (let [coords [{:lib 'a/a :version "1.0"}
+                  {:lib 'b/b :version "${x}"}
+                  {:lib 'c/c :version "2.0"}]
+          once  (v/filter-resolved-coords coords)
+          twice (v/filter-resolved-coords once)]
+      (is (= once twice)))))
+
+(deftest parse-pom-deps-raw-keeps-unresolved-test
+  (testing "raw variant returns all compile-scope deps incl. ${...} placeholders"
+    (let [pom "<?xml version=\"1.0\"?>
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <version>2.17.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojure</artifactId>
+      <version>${clojure.version}</version>
+    </dependency>
+  </dependencies>
+</project>"
+          raw (v/parse-pom-deps-raw pom)
+          filtered (v/filter-resolved-coords raw)]
+      (is (= 2 (count raw)) "raw keeps unresolved ${...} coord")
+      (is (= 1 (count filtered)) "filter drops the ${...} coord")
+      (is (= 'com.fasterxml.jackson.core/jackson-core
+             (:lib (first filtered)))))))
+
 (deftest parse-pom-deps-filters-maven-properties-test
   (testing "filters out deps with unresolved Maven property versions"
     (let [pom "<?xml version=\"1.0\"?>
@@ -521,3 +611,28 @@
           lines (v/format-dep-tree tree {})]
       (is (= 1 (count lines)))
       (is (str/includes? (first lines) "cycle")))))
+
+;; =============================================================================
+;; Integration: real fixture POM with ${revision} + CI-friendly property refs
+;; =============================================================================
+
+(deftest unresolved-property-integration-test
+  (testing "parsing a real fixture POM with ${revision}/${jackson.version} drops"
+    (let [pom-xml  (slurp "test/fixtures/unresolved-revision.pom.xml")
+          raw      (v/parse-pom-deps-raw pom-xml)
+          warnings (atom [])
+          filtered (v/filter-resolved-coords raw #(swap! warnings conj %))
+          libs     (set (map :lib filtered))
+          warned   (set (map :lib @warnings))]
+      ;; Raw parse sees all 4 compile deps (no silent drops).
+      (is (= 4 (count raw)))
+      ;; Filter keeps only the two resolved coords.
+      (is (= 2 (count filtered)))
+      (is (contains? libs 'org.clojure/clojure))
+      (is (contains? libs 'cheshire/cheshire))
+      ;; Filter drops both unresolved coords — and logs each.
+      (is (= 2 (count @warnings)))
+      (is (contains? warned 'example.unresolved/sibling-module))
+      (is (contains? warned 'com.fasterxml.jackson.core/jackson-databind))
+      ;; Dropped coords truly contained ${...} placeholders.
+      (is (every? v/unresolved-property? @warnings)))))

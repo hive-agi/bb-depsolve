@@ -423,6 +423,73 @@
                 (true? (v/maven-property? prop))))
 
 ;; =============================================================================
+;; P26: unresolved-property? detects ${...} anywhere in a string
+;; =============================================================================
+
+(def gen-string-with-placeholder
+  "Generate an arbitrary string that contains at least one ${...} placeholder."
+  (gen/let [prefix gen/string-alphanumeric
+            inner  (gen/such-that seq gen/string-alphanumeric 25)
+            suffix gen/string-alphanumeric]
+    (str prefix "${" inner "}" suffix)))
+
+(defspec p26-unresolved-property-detects-placeholders 200
+  (prop/for-all [s gen-string-with-placeholder]
+                (true? (v/unresolved-property? s))))
+
+(defspec p26-unresolved-property-rejects-semver 200
+  (prop/for-all [v gen-version-string]
+                (false? (v/unresolved-property? v))))
+
+(defspec p26-unresolved-property-rejects-semver-tag 200
+  (prop/for-all [v gen-semver-tag]
+                (false? (v/unresolved-property? v))))
+
+(props/defprop-total p26-unresolved-property-totality
+  v/unresolved-property? gen/string-alphanumeric)
+
+;; =============================================================================
+;; P27: filter-resolved-coords idempotence & subset properties
+;; =============================================================================
+
+(def gen-resolved-coord
+  "Coord map whose :version is a plain semver string."
+  (gen/let [lib     gen-lib-sym
+            version gen-version-string]
+    {:lib lib :version version}))
+
+(def gen-unresolved-coord
+  "Coord map whose :version contains an unresolved ${...} placeholder."
+  (gen/let [lib   gen-lib-sym
+            inner (gen/elements ["clojure.version" "project.version"
+                                 "jackson.version" "revision" "foo"])]
+    {:lib lib :version (str "${" inner "}")}))
+
+(def gen-mixed-coords
+  "Vector of coords mixing resolved and unresolved entries."
+  (gen/vector (gen/one-of [gen-resolved-coord gen-unresolved-coord]) 0 20))
+
+(defspec p27-filter-resolved-coords-idempotent 200
+  (prop/for-all [coords gen-mixed-coords]
+                (let [once  (v/filter-resolved-coords coords)
+                      twice (v/filter-resolved-coords once)]
+                  (= once twice))))
+
+(defspec p27-filter-drops-all-unresolved 200
+  (prop/for-all [coords gen-mixed-coords]
+                (every? (complement v/unresolved-property?)
+                        (v/filter-resolved-coords coords))))
+
+(defspec p27-filter-keeps-all-resolved 200
+  (prop/for-all [coords (gen/vector gen-resolved-coord 0 20)]
+                (= coords (v/filter-resolved-coords coords))))
+
+(defspec p27-filter-subset-of-input 200
+  (prop/for-all [coords gen-mixed-coords]
+                (let [filtered (v/filter-resolved-coords coords)]
+                  (every? (set coords) filtered))))
+
+;; =============================================================================
 ;; P20: bumped version is always strictly newer
 ;; =============================================================================
 

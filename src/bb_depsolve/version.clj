@@ -261,6 +261,56 @@
   [s]
   (boolean (and (string? s) (re-matches #"\$\{[^}]+\}" s))))
 
+(defn unresolved-property?
+  "True if the input still contains an unresolved Maven `${...}` placeholder
+   after POM parsing. Pure, total.
+
+   Two arities:
+   - (unresolved-property? s)      => true if string s contains `${...}` anywhere
+   - (unresolved-property? coord)  => true if any key field (:lib/:group/:artifact/:version)
+                                       of the coord map contains a `${...}` placeholder
+
+   Notes:
+   - `maven-property?` is strict: whole-string match against `${foo}`.
+   - `unresolved-property?` is looser: detects placeholders anywhere (e.g. `foo-${bar}-baz`)
+     and understands coord maps directly, which is what the filter step needs.
+   - Returns false for nil/non-string/non-map inputs."
+  [x]
+  (cond
+    (string? x)
+    (boolean (re-find #"\$\{[^}]+\}" x))
+
+    (map? x)
+    (let [fields [:lib :group :artifact :version :group-id :artifact-id]]
+      (boolean
+       (some (fn [k]
+               (let [v (get x k)]
+                 (unresolved-property? (when v (str v)))))
+             fields)))
+
+    :else false))
+
+(defn filter-resolved-coords
+  "Drop coord maps whose key fields still contain `${...}` placeholders.
+   Pure, total. Returns a vec preserving input order.
+
+   2-arity variant accepts a warn-fn `(fn [coord] ...)` called once per dropped
+   coord. This is how the I/O boundary surfaces diagnostics without the
+   Calculation layer taking on a logging dependency (see convention
+   20260216171950-24142d26: SLAP)."
+  ([coords]
+   (filter-resolved-coords coords nil))
+  ([coords warn-fn]
+   (if (nil? coords)
+     []
+     (->> coords
+          (reduce (fn [acc coord]
+                    (if (unresolved-property? coord)
+                      (do (when warn-fn (warn-fn coord))
+                          acc)
+                      (conj acc coord)))
+                  [])))))
+
 (defn group-id->path
   "Convert Maven groupId to URL path segment.
    \"com.fasterxml.jackson.core\" -> \"com/fasterxml/jackson/core\"
@@ -279,9 +329,12 @@
     [(format "https://repo.clojars.org/%s/%s/%s/%s" gpath artifact-id version fname)
      (format "https://repo1.maven.org/maven2/%s/%s/%s/%s" gpath artifact-id version fname)]))
 
-(defn parse-pom-deps
-  "Parse POM XML string, extract compile-scope dependencies.
-   Returns vec of {:lib :version}. Skips test/provided/system/optional deps.
+(defn parse-pom-deps-raw
+  "Parse POM XML string, extract compile-scope dependencies WITHOUT filtering
+   unresolved Maven `${...}` property placeholders. Use this at the I/O boundary
+   together with `filter-resolved-coords` so dropped coords can be logged.
+
+   Returns vec of {:lib :version}. Skips test/provided/system/optional scopes.
    Total: returns [] for nil/unparseable input."
   [xml-string]
   (try
@@ -301,7 +354,6 @@
                            scope (or (text (find-el dep :scope)) "compile")
                            optional (text (find-el dep :optional))]
                        (when (and group artifact version
-                                  (not (maven-property? version))
                                   (= scope "compile")
                                   (not= optional "true"))
                          {:lib (symbol (str group "/" artifact))
@@ -309,6 +361,17 @@
              (vec))
         []))
     (catch Exception _ [])))
+
+(defn parse-pom-deps
+  "Parse POM XML string, extract compile-scope dependencies.
+   Returns vec of {:lib :version}. Skips test/provided/system/optional deps
+   AND silently drops unresolved Maven `${...}` property placeholders.
+   Total: returns [] for nil/unparseable input.
+
+   For visibility into dropped placeholder coords (warnings), use
+   `parse-pom-deps-raw` + `filter-resolved-coords` at the I/O boundary."
+  [xml-string]
+  (filter-resolved-coords (parse-pom-deps-raw xml-string)))
 
 (defn deps-edn->dep-coords
   "Parse deps.edn string, extract dependency coordinates from :deps.
