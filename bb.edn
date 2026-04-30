@@ -10,7 +10,7 @@
  :tasks
  {test {:extra-paths ["test"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
-                     io.github.hive-agi/hive-test {:git/tag "v0.2.0" :git/sha "841da83"}
+                     io.github.hive-agi/hive-test {:git/tag "v0.2.1" :git/sha "48b480f"}
                      io.github.cognitect-labs/test-runner
                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
         :task (exec 'cognitect.test-runner.api/test)}}}
