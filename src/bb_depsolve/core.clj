@@ -782,9 +782,14 @@
         result))))
 
 (defn tree-cmd
-  "Show transitive dependency tree with conflict detection."
+  "Show transitive dependency tree with conflict detection.
+
+   Flags:
+     --conflicts-only  only print projects that have version conflicts
+     --resolved        also print the Maven-style nearest-wins resolution
+                       (one chosen version per lib) per project"
   [{:keys [opts]}]
-  (let [{:keys [root skip-dirs depth tree-depth conflicts-only]
+  (let [{:keys [root skip-dirs depth tree-depth conflicts-only resolved]
          :or {root "." depth default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -813,7 +818,8 @@
             resolve-fn (fn [lib version]
                          (resolve-dep-children cache lib version))
             tree (v/build-dep-tree direct-deps resolve-fn tree-depth)
-            conflicts (v/find-conflicts tree)]
+            resolution (v/resolve-versions tree)
+            conflicts (:conflicts resolution)]
 
         (when (or (not conflicts-only) (seq conflicts))
           (println (c :bold (c :cyan project))
@@ -829,6 +835,16 @@
             (doseq [[lib versions] (sort-by (comp str key) conflicts)]
               (println (str "    " (c :yellow (str lib)) " — "
                            (str/join " vs " (sort v/version-compare (seq versions)))))))
+
+          (when resolved
+            (println)
+            (println (c :bold (str "  Resolved (" (count (:resolved resolution)) " libs, nearest-wins):")))
+            (doseq [[lib {:keys [version depth]}] (sort-by (comp str key) (:resolved resolution))]
+              (println (str "    " (c :cyan (str lib)) " " (c :green version)
+                           (c :dim (str "  (depth " depth ")")))))
+            (when (seq (:missing resolution))
+              (println (c :yellow (str "  Missing (" (count (:missing resolution)) "): "
+                                      (str/join ", " (sort (:missing resolution))))))))
           (println))))))
 
 ;; Workspace automation extracted to bb-depsolve.wave (v0.7.0 refactor)

@@ -47,6 +47,7 @@
                           :fix :boolean
                           :pre-release :boolean
                           :conflicts-only :boolean
+                          :resolved :boolean
                           :commit :boolean
                           :help :boolean
                           :major :boolean

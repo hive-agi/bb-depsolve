@@ -6,7 +6,8 @@
    Sits at the bottom of the dependency stack — innermost onion layer."
   (:require [clojure.data.xml :as xml]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [clojure.set :as set]))
 
 (defn parse-semver
   "Parse a semver tag like 'v0.4.0' into [major minor patch].
@@ -428,6 +429,71 @@
     (->> @versions
          (filter (fn [[_ vs]] (> (count vs) 1)))
          (into {}))))
+
+(defn collect-occurrences
+  "Walk dep tree and collect every occurrence of each lib as
+   {lib [{:version :type :depth} ...]}. Pure. Used by resolve-versions."
+  [trees]
+  (let [acc (atom {})]
+    (letfn [(walk [nodes depth]
+              (doseq [{:keys [lib version type children cycle?]} nodes]
+                (when-not cycle?
+                  (swap! acc update lib (fnil conj [])
+                         {:version version :type type :depth depth}))
+                (walk children (inc depth))))]
+      (walk trees 0))
+    @acc))
+
+(defn resolve-versions
+  "Maven-style nearest-wins resolver over a transitive dep tree.
+
+   Picks ONE chosen version per lib using the occurrence with the lowest
+   depth (root deps win over transitive). Ties at the same depth break by
+   the highest version (per `version-compare`).
+
+   Pure, total. Inputs:
+     trees - vec of dep tree nodes (output of `build-dep-tree`)
+
+   Returns a map:
+     {:resolved  {lib {:version :type :depth}}   ; nearest-wins selection
+      :conflicts {lib #{versions}}               ; libs with >1 distinct version
+      :occurrences {lib [{:version :type :depth} ...]}  ; raw multiset
+      :missing   #{libs}}                        ; libs ONLY appearing in cycles,
+                                                 ; never resolved elsewhere
+
+   Cycle, conflict, diamond and missing-dep cases are all surfaced through
+   this single data structure; callers (Action layer) decide how to render."
+  [trees]
+  (let [occurrences (collect-occurrences trees)
+        cycle-acc (atom #{})
+        _ (letfn [(walk [nodes]
+                    (doseq [{:keys [lib children cycle?]} nodes]
+                      (when cycle? (swap! cycle-acc conj lib))
+                      (walk children)))]
+            (walk trees))
+        cycle-libs @cycle-acc
+        nearest (fn [occs]
+                  ;; min depth wins; among ties, highest version wins
+                  (->> occs
+                       (group-by :depth)
+                       (sort-by key)
+                       first
+                       val
+                       (sort-by :version version-compare)
+                       last))
+        resolved (into {}
+                       (map (fn [[lib occs]] [lib (nearest occs)]))
+                       occurrences)
+        conflicts (->> occurrences
+                       (filter (fn [[_ occs]]
+                                 (> (count (set (map :version occs))) 1)))
+                       (map (fn [[lib occs]] [lib (set (map :version occs))]))
+                       (into {}))
+        missing (set/difference cycle-libs (set (keys resolved)))]
+    {:resolved resolved
+     :conflicts conflicts
+     :occurrences occurrences
+     :missing missing}))
 
 (defn format-dep-tree
   "Format dependency tree as indented string lines with ANSI colors.

@@ -5,3 +5,4 @@ target/
 *.class
 .lsp/
 .clj-kondo/.cache/
+.clj-kondo/

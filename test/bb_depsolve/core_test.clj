@@ -616,6 +616,76 @@
 ;; Integration: real fixture POM with ${revision} + CI-friendly property refs
 ;; =============================================================================
 
+(deftest resolve-versions-test
+  (testing "single direct dep -- trivial resolution"
+    (let [tree [{:lib 'a/a :version "1.0" :type :mvn :cycle? false :children []}]
+          {:keys [resolved conflicts missing]} (v/resolve-versions tree)]
+      (is (= 1 (count resolved)))
+      (is (= "1.0" (get-in resolved ['a/a :version])))
+      (is (= 0 (get-in resolved ['a/a :depth])))
+      (is (empty? conflicts))
+      (is (empty? missing))))
+
+  (testing "diamond dep -- highest version wins among same-depth ties"
+    (let [tree [{:lib 'a/a :version "1.0" :type :mvn :cycle? false
+                 :children [{:lib 'c/c :version "1.0" :type :mvn :cycle? false :children []}]}
+                {:lib 'b/b :version "2.0" :type :mvn :cycle? false
+                 :children [{:lib 'c/c :version "2.0" :type :mvn :cycle? false :children []}]}]
+          {:keys [resolved conflicts]} (v/resolve-versions tree)]
+      (is (= "2.0" (get-in resolved ['c/c :version])) "highest version among ties wins")
+      (is (= #{"1.0" "2.0"} (get conflicts 'c/c)))))
+
+  (testing "nearest-wins -- shallow root beats deeper transitive"
+    (let [tree [{:lib 'a/a :version "1.0" :type :mvn :cycle? false
+                 :children [{:lib 'shared/s :version "3.0" :type :mvn :cycle? false :children []}]}
+                {:lib 'shared/s :version "1.0" :type :mvn :cycle? false :children []}]
+          {:keys [resolved conflicts]} (v/resolve-versions tree)]
+      (is (= "1.0" (get-in resolved ['shared/s :version])) "depth-0 wins over depth-1")
+      (is (= 0 (get-in resolved ['shared/s :depth])))
+      (is (= #{"1.0" "3.0"} (get conflicts 'shared/s)))))
+
+  (testing "cycle -- cycle node not infinitely recursed, lib still resolved at root"
+    (let [tree [{:lib 'a/a :version "1.0" :type :mvn :cycle? false
+                 :children [{:lib 'b/b :version "1.0" :type :mvn :cycle? false
+                             :children [{:lib 'a/a :version "1.0" :type :mvn :cycle? true :children []}]}]}]
+          {:keys [resolved missing conflicts]} (v/resolve-versions tree)]
+      (is (= "1.0" (get-in resolved ['a/a :version])))
+      (is (= "1.0" (get-in resolved ['b/b :version])))
+      (is (empty? missing) "a/a IS resolved at root, so not :missing")
+      (is (empty? conflicts))))
+
+  (testing "missing dep -- lib only inside a cycle, never resolved elsewhere"
+    (let [tree [{:lib 'root/r :version "1.0" :type :mvn :cycle? false
+                 :children [{:lib 'orphan/o :version "1.0" :type :mvn :cycle? true :children []}]}]
+          {:keys [resolved missing]} (v/resolve-versions tree)]
+      (is (contains? resolved 'root/r))
+      (is (not (contains? resolved 'orphan/o)) "cycle-only libs not in :resolved")
+      (is (= #{'orphan/o} missing))))
+
+  (testing "no conflicts when all versions agree"
+    (let [tree [{:lib 'a/a :version "1.0" :type :mvn :cycle? false
+                 :children [{:lib 'c/c :version "1.0" :type :mvn :cycle? false :children []}]}
+                {:lib 'b/b :version "2.0" :type :mvn :cycle? false
+                 :children [{:lib 'c/c :version "1.0" :type :mvn :cycle? false :children []}]}]
+          {:keys [conflicts]} (v/resolve-versions tree)]
+      (is (empty? conflicts))))
+
+  (testing "empty tree -- total / no NPE"
+    (let [{:keys [resolved conflicts occurrences missing]} (v/resolve-versions [])]
+      (is (= {} resolved))
+      (is (= {} conflicts))
+      (is (= {} occurrences))
+      (is (= #{} missing))))
+
+  (testing "occurrences preserved for downstream tooling"
+    (let [tree [{:lib 'a/a :version "1.0" :type :mvn :cycle? false
+                 :children [{:lib 'c/c :version "1.0" :type :mvn :cycle? false :children []}]}
+                {:lib 'b/b :version "2.0" :type :mvn :cycle? false
+                 :children [{:lib 'c/c :version "2.0" :type :mvn :cycle? false :children []}]}]
+          {:keys [occurrences]} (v/resolve-versions tree)]
+      (is (= 2 (count (get occurrences 'c/c))))
+      (is (= #{"1.0" "2.0"} (set (map :version (get occurrences 'c/c))))))))
+
 (deftest unresolved-property-integration-test
   (testing "parsing a real fixture POM with ${revision}/${jackson.version} drops"
     (let [pom-xml  (slurp "test/fixtures/unresolved-revision.pom.xml")
