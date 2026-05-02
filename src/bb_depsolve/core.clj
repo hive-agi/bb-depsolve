@@ -34,6 +34,36 @@
   [project-dir & args]
   (proc/sh (into ["git" "-C" (str project-dir)] args)))
 
+(defn auth-headers
+  "Build HTTP Authorization headers for forges and registries from env vars.
+   Pure-ish at boundary: reads env vars only. Returns a header map (empty if no creds).
+
+   Env vars consulted by TARGET:
+     :github   GITHUB_TOKEN              -> {Authorization \"token <t>\"}
+     :gitlab   GITLAB_TOKEN              -> {PRIVATE-TOKEN <t>}
+     :codeberg CODEBERG_TOKEN            -> {Authorization \"token <t>\"}
+     :clojars  CLOJARS_USERNAME+_PASSWORD-> {Authorization \"Basic <b64>\"}
+     :maven    MAVEN_AUTH (raw header)   -> {Authorization <raw>}
+     other                               -> {}"
+  [target]
+  (case target
+    :github   (when-let [t (System/getenv "GITHUB_TOKEN")]
+                {"Authorization" (str "token " t)})
+    :gitlab   (when-let [t (System/getenv "GITLAB_TOKEN")]
+                {"PRIVATE-TOKEN" t})
+    :codeberg (when-let [t (System/getenv "CODEBERG_TOKEN")]
+                {"Authorization" (str "token " t)})
+    :clojars  (let [u (System/getenv "CLOJARS_USERNAME")
+                    p (System/getenv "CLOJARS_PASSWORD")]
+                (when (and u p)
+                  {"Authorization"
+                   (str "Basic "
+                        (.encodeToString (java.util.Base64/getEncoder)
+                                         (.getBytes (str u ":" p))))}))
+    :maven    (when-let [t (System/getenv "MAVEN_AUTH")]
+                {"Authorization" t})
+    {}))
+
 (defn- git-changed-files
   "Get list of changed (tracked + untracked dep) files in a project dir."
   [project-dir]
@@ -204,25 +234,30 @@
     (r/err :parse/not-github-lib {:lib lib-sym})))
 
 (defn resolve-clojars-latest
-  "Query Clojars API for latest release version. Returns Result<string>."
+  "Query Clojars API for latest release version. Returns Result<string>.
+   Honors CLOJARS_USERNAME/CLOJARS_PASSWORD env for private repos."
   [group-id artifact-id]
   (r/try-effect*
    :io/clojars
    (let [url (format "https://clojars.org/api/artifacts/%s/%s" group-id artifact-id)
-         resp (http/get url {:headers {"Accept" "application/json"} :throw false})]
+         headers (merge {"Accept" "application/json"} (auth-headers :clojars))
+         resp (http/get url {:headers headers :throw false})]
      (if (= 200 (:status resp))
        (or (-> (json/parse-string (:body resp) true) :latest_release)
            (throw (ex-info "No latest_release" {:group group-id :artifact artifact-id})))
        (throw (ex-info "Clojars HTTP error" {:status (:status resp)}))))))
 
 (defn resolve-maven-latest
-  "Query Maven Central for latest version. Returns Result<string>."
+  "Query Maven Central for latest version. Returns Result<string>.
+   Honors MAVEN_AUTH env var (raw Authorization header)."
   [group-id artifact-id]
   (r/try-effect*
    :io/maven-central
    (let [url (format "https://search.maven.org/solrsearch/select?q=g:%%22%s%%22+AND+a:%%22%s%%22&rows=1&wt=json"
                      group-id artifact-id)
-         resp (http/get url {:throw false})]
+         headers (auth-headers :maven)
+         resp (http/get url (merge {:throw false}
+                                   (when (seq headers) {:headers headers})))]
      (if (= 200 (:status resp))
        (or (-> (json/parse-string (:body resp) true) :response :docs first :latestVersion)
            (throw (ex-info "No latestVersion" {:group group-id :artifact artifact-id})))
@@ -633,10 +668,54 @@
 
             (println (c :dim "  Pass --fix to auto-split into local.deps.edn and resolve remote coords."))))))))
 
+(defn find-consumers
+  "Scan workspace for projects whose dep files reference TARGET-LIB.
+   Returns vec of {:project :path :version}. Pure-ish (slurps files).
+   Used by major-bump compatibility warning."
+  [root-dir skip-set target-lib]
+  (let [target-str (str target-lib)
+        dep-files (find-dep-files {:root root-dir :skip-dirs skip-set})]
+    (->> dep-files
+         (keep (fn [{:keys [path project] :as df}]
+                 (let [content (slurp path)
+                       git (->> (v/find-git-deps content)
+                                (filter #(= target-str (str (:lib %))))
+                                first)
+                       mvn (->> (extract-mvn-deps df content)
+                                (filter #(= target-str (str (:lib %))))
+                                first)]
+                   (when-let [hit (or git mvn)]
+                     {:project project
+                      :path path
+                      :version (or (:tag hit) (:version hit))}))))
+         (vec))))
+
+(defn warn-major-bump!
+  "Warn the user before performing a major version bump, listing workspace
+   consumers that would need a coordinated update.
+   Returns true to proceed, false to abort."
+  [project-dir lib-sym old-tag new-tag]
+  (let [root (str (fs/parent project-dir))
+        consumers (find-consumers root default-skip-dirs lib-sym)]
+    (println (c :yellow (format "MAJOR BUMP: %s %s -> %s" lib-sym old-tag new-tag)))
+    (if (empty? consumers)
+      (do (println (c :dim "  No workspace consumers found. Proceeding."))
+          true)
+      (do
+        (println (c :yellow (format "  %d workspace consumer(s) depend on %s:"
+                                    (count consumers) lib-sym)))
+        (doseq [{:keys [project version]} consumers]
+          (println (str "    " (c :cyan project) " @ " (c :dim version))))
+        (println (c :dim "  Run `bb-depsolve sync --apply` after bump to align."))
+        true))))
+
 (defn bump-cmd
-  "Bump VERSION file, git commit + tag + push, optionally sync downstream."
+  "Bump VERSION file, git commit + tag + push, optionally sync downstream.
+   When --stable bumps to v1.0.0+ or any major increment beyond v0,
+   warns about workspace consumers (compat audit). Pass --force to skip the
+   confirmation prompt."
   [{:keys [opts]}]
-  (let [{:keys [root major minor stable sync org]
+  (let [{:keys [root major minor stable sync org force]
          :or {root "."}} opts
         project-dir (str (fs/canonicalize root))
         version-file (str (fs/path project-dir "VERSION"))]
@@ -658,7 +737,35 @@
                                :else  v/bump-patch)
             new-semver   (bump-fn current)
             new-version  (v/semver->version new-semver)
-            new-tag      (v/semver->tag new-semver)]
+            new-tag      (v/semver->tag new-semver)
+            project-name (str (fs/file-name project-dir))
+            workspace    (str (fs/parent project-dir))
+            ;; Best-effort consumer scan keyed by artifact-id (project-name).
+            consumers    (when (v/major-bump? (str "v" current-str) new-tag)
+                           (->> (find-dep-files {:root workspace
+                                                 :skip-dirs default-skip-dirs})
+                                (keep (fn [{:keys [path project] :as df}]
+                                        (let [content (slurp path)
+                                              hits (concat (v/find-git-deps content)
+                                                           (extract-mvn-deps df content))
+                                              match (some #(when (= project-name
+                                                                    (v/lib-artifact-id (:lib %)))
+                                                             %) hits)]
+                                          (when match
+                                            {:project project
+                                             :version (or (:tag match) (:version match))}))))
+                                (vec)))]
+
+        (when (seq consumers)
+          (println (c :yellow (format "MAJOR BUMP: %s -> %s" current-str new-version)))
+          (println (c :yellow (format "  %d workspace consumer(s) reference '%s':"
+                                      (count consumers) project-name)))
+          (doseq [{:keys [project version]} consumers]
+            (println (str "    " (c :cyan project) " @ " (c :dim version))))
+          (println (c :dim "  Run `bb-depsolve sync --apply` after bump to align."))
+          (when-not force
+            (println (c :dim "  Pass --force to bypass this warning."))
+            (System/exit 1)))
 
         (println (c :bold (str "Bumping " current-str " -> " new-version)))
         (println)
@@ -707,11 +814,20 @@
 ;; =============================================================================
 
 (defn- fetch-pom-xml
-  "Fetch POM XML from a URL. Returns Result<string>."
+  "Fetch POM XML from a URL. Returns Result<string>.
+   Selects auth headers by URL prefix (clojars vs maven)."
   [url]
   (r/try-effect*
    :io/fetch-pom
-   (let [resp (gate/gate-run http-gate (fn [] (http/get url {:throw false})))]
+   (let [target (cond
+                  (str/includes? url "clojars.org")    :clojars
+                  (str/includes? url "maven.org")      :maven
+                  (str/includes? url "repo1.maven")    :maven
+                  :else                                 :none)
+         headers (auth-headers target)
+         resp (gate/gate-run http-gate
+                (fn [] (http/get url (merge {:throw false}
+                                            (when (seq headers) {:headers headers})))))]
      (if (= 200 (:status resp))
        (:body resp)
        (throw (ex-info "POM not found" {:url url}))))))
@@ -744,15 +860,24 @@
             filter-step)))
 
 (defn- fetch-git-deps-edn
-  "Fetch raw deps.edn content from GitHub. Returns Result<string>."
-  [org repo tag]
-  (r/try-effect*
-   :io/fetch-git-deps
-   (let [url (format "https://raw.githubusercontent.com/%s/%s/%s/deps.edn" org repo tag)
-         resp (gate/gate-run http-gate (fn [] (http/get url {:throw false})))]
-     (if (= 200 (:status resp))
-       (:body resp)
-       (throw (ex-info "deps.edn not found" {:org org :repo repo :tag tag}))))))
+  "Fetch raw deps.edn content from a forge. Returns Result<string>.
+   Uses bb-depsolve.version/forge-raw-url to pick the per-forge URL shape and
+   bb-depsolve.core/auth-headers to attach private-registry creds."
+  ([org repo tag]
+   (fetch-git-deps-edn :github org repo tag))
+  ([forge org repo tag]
+   (r/try-effect*
+    :io/fetch-git-deps
+    (let [url (or (v/forge-raw-url forge org repo tag "deps.edn")
+                  (throw (ex-info "Unsupported forge" {:forge forge})))
+          headers (auth-headers forge)
+          resp (gate/gate-run http-gate
+                 (fn [] (http/get url (merge {:throw false}
+                                             (when (seq headers) {:headers headers})))))]
+      (if (= 200 (:status resp))
+        (:body resp)
+        (throw (ex-info "deps.edn not found"
+                        {:forge forge :org org :repo repo :tag tag})))))))
 
 (defn fetch-git-dep-coords
   "Fetch deps.edn from GitHub raw content for a git dep.

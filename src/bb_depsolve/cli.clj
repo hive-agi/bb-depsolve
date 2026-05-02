@@ -27,10 +27,14 @@
     :doc "Show dependency matrix"}
    {:cmds ["lint"]    :fn (wrap-help core/lint-cmd     "lint"    "Detect dep anti-patterns (:local/root, etc.)")
     :doc "Detect dep anti-patterns (:local/root, etc.)"}
+   {:cmds ["deep-lint"] :fn (wrap-help wave/deep-lint-cmd "deep-lint" "Lint latest tagged releases for :local/root")
+    :doc "Lint latest tagged releases for :local/root anti-patterns"}
    {:cmds ["bump"]    :fn (wrap-help core/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help core/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
     :doc "Show transitive dependency tree with conflict detection"}
+   {:cmds ["lock"]    :fn (wrap-help wave/lock-cmd    "lock"    "Generate deps.lock.edn per project")
+    :doc "Generate deterministic deps.lock.edn per project"}
    {:cmds ["audit"]   :fn (wrap-help audit/audit-cmd  "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
     :doc "Scan dependencies for known CVEs (via OSV.dev)"}
    {:cmds ["bump-wave"]    :fn (wrap-help wave/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
@@ -39,6 +43,10 @@
     :doc "Push all workspace projects to remotes"}
    {:cmds ["release-wave"] :fn (wrap-help wave/release-wave-cmd "release-wave" "Full release: upgrade → lint → sync → bump → push")
     :doc "Full release: upgrade → lint → sync → bump → push"}
+   {:cmds ["gitignore"]    :fn (wrap-help wave/gitignore-cmd    "gitignore"    "Auto-add .gitignore entries to workspace projects")
+    :doc "Auto-add .gitignore entries (target/, .cpcache/, etc.)"}
+   {:cmds ["rename-branch"] :fn (wrap-help wave/rename-branch-cmd "rename-branch" "Rename master->main across workspace")
+    :doc "Rename branch (default master->main) across workspace"}
    {:cmds []          :fn (fn [_] (wave/help-cmd dispatch-table))}])
 
 (defn -main [& args]
@@ -54,5 +62,10 @@
                           :minor :boolean
                           :stable :boolean
                           :sync :boolean
+                          :force :boolean
+                          :skip-remote :boolean
                           :depth :long
-                          :tree-depth :long}}))
+                          :tree-depth :long
+                          :from :string
+                          :to :string
+                          :extra :string}}))

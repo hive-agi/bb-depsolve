@@ -11,7 +11,10 @@
      help-cmd         — print CLI help"
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
-            [bb-depsolve.core :as core]))
+            [bb-depsolve.core :as core]
+            [hive-dsl.bounded-atom :as ba]
+            [bb-depsolve.version :as v]
+            [clojure.pprint :as pp]))
 
 (defn bump-wave-cmd
   "Bump all workspace projects that have commits ahead of their last tag."
@@ -168,6 +171,283 @@
       (println)
 
       (println (core/c :green (core/c :bold "Release wave complete."))))))
+
+(def ^:private default-gitignore-entries
+  ["target/"
+   ".cpcache/"
+   ".nrepl-port"
+   ".lsp/"
+   ".clj-kondo/.cache/"
+   "local.deps.edn"
+   "*.iml"
+   ".idea/"
+   ".DS_Store"
+   "*.log"])
+
+(defn- ensure-gitignore-lines!
+  "Idempotently append missing entries to .gitignore. Returns count added.
+   Preserves existing content; only appends when entries are missing."
+  [project-dir entries]
+  (let [gi (str (fs/path project-dir ".gitignore"))
+        content (if (fs/exists? gi) (slurp gi) "")
+        present (->> (str/split-lines content)
+                     (map str/trim)
+                     (set))
+        missing (remove present entries)]
+    (when (seq missing)
+      (let [trailing (if (or (empty? content)
+                             (str/ends-with? content "\n"))
+                       ""
+                       "\n")
+            block (str trailing
+                       (when (or (empty? content)
+                                 (not (str/blank? (last (str/split-lines content)))))
+                         (when (seq content) "\n"))
+                       "# bb-depsolve auto-added\n"
+                       (str/join "\n" missing)
+                       "\n")]
+        (spit gi (str content block))))
+    (count missing)))
+
+(defn gitignore-cmd
+  "Add common Clojure entries to each workspace project's .gitignore.
+   Idempotent: never duplicates entries.
+
+   Default entries: target/ .cpcache/ .nrepl-port .lsp/ .clj-kondo/.cache/
+                    local.deps.edn *.iml .idea/ .DS_Store *.log
+
+   Pass --extra <csv> to add custom entries beyond defaults."
+  [{:keys [opts]}]
+  (let [{:keys [root skip-dirs extra]
+         :or {root "."}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   core/default-skip-dirs)
+        extra-set (when extra (str/split extra #","))
+        entries (vec (distinct (concat default-gitignore-entries extra-set)))
+        projects (->> (fs/list-dir root-dir)
+                      (filter fs/directory?)
+                      (remove #(core/skip-path? root-dir skip-set %))
+                      (filter #(fs/exists? (fs/path % ".git")))
+                      (sort))]
+
+    (println (core/c :bold (format "Updating .gitignore in %d projects..." (count projects))))
+    (println)
+
+    (let [updated (atom 0)
+          unchanged (atom 0)]
+      (doseq [project-dir projects
+              :let [project (str (fs/file-name project-dir))
+                    added (ensure-gitignore-lines! (str project-dir) entries)]]
+        (if (pos? added)
+          (do (swap! updated inc)
+              (println (core/c :green (format "  %s — added %d entr%s"
+                                               project added
+                                               (if (= 1 added) "y" "ies")))))
+          (do (swap! unchanged inc)
+              (println (core/c :dim (str "  " project " — already up to date"))))))
+
+      (println)
+      (println (core/c :bold (format "Updated: %d  Unchanged: %d" @updated @unchanged))))))
+
+(defn rename-branch-cmd
+  "Rename the default branch (default master->main) in each workspace project.
+   Steps per project:
+     1. git branch -m <from> <to>          (local rename)
+     2. git push -u origin <to>            (push new branch)
+     3. git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/<to>
+     4. git push origin --delete <from>    (remove old branch on remote)
+
+   Skips projects where:
+     - the FROM branch does not exist locally
+     - the TO branch already exists
+     - --apply is not set (dry-run)"
+  [{:keys [opts]}]
+  (let [{:keys [root skip-dirs from to apply skip-remote]
+         :or {root "." from "master" to "main"}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   core/default-skip-dirs)
+        projects (->> (fs/list-dir root-dir)
+                      (filter fs/directory?)
+                      (remove #(core/skip-path? root-dir skip-set %))
+                      (filter #(fs/exists? (fs/path % ".git")))
+                      (sort))]
+
+    (println (core/c :bold (format "Renaming branch '%s' -> '%s' across %d projects..."
+                                    from to (count projects))))
+    (println)
+
+    (let [renamed (atom 0)
+          skipped (atom 0)]
+      (doseq [project-dir projects
+              :let [project (str (fs/file-name project-dir))
+                    dir (str project-dir)
+                    branches (core/git dir "branch" "--list")
+                    has-from? (str/includes? (or (:out branches) "") from)
+                    has-to?   (str/includes? (or (:out branches) "") to)]]
+        (cond
+          (not has-from?)
+          (do (swap! skipped inc)
+              (println (core/c :dim (format "  %s — no '%s' branch, skipped" project from))))
+
+          has-to?
+          (do (swap! skipped inc)
+              (println (core/c :dim (format "  %s — '%s' already exists, skipped" project to))))
+
+          (not apply)
+          (println (core/c :yellow (format "  %s — would rename '%s' -> '%s'" project from to)))
+
+          :else
+          (let [r1 (core/git dir "branch" "-m" from to)]
+            (if (zero? (:exit r1))
+              (do (swap! renamed inc)
+                  (println (core/c :green (format "  %s — renamed locally" project)))
+                  (when-not skip-remote
+                    (let [r2 (core/git dir "push" "-u" "origin" to)
+                          r3 (core/git dir "push" "origin" "--delete" from)]
+                      (when (zero? (:exit r2))
+                        (println (core/c :green (str "    pushed '" to "' to origin"))))
+                      (when (zero? (:exit r3))
+                        (println (core/c :green (str "    deleted '" from "' on origin")))))))
+              (do (swap! skipped inc)
+                  (println (core/c :yellow (format "  %s — local rename failed (%s)"
+                                                   project (str/trim (or (:err r1) ""))))))))))
+
+      (println)
+      (println (core/c :bold (format "Renamed: %d  Skipped: %d" @renamed @skipped)))
+      (when-not apply
+        (println (core/c :dim "  Dry run. Pass --apply to perform the rename."))))))
+
+(defn lock-cmd
+  "Generate deps.lock.edn for each workspace project containing the
+   resolved transitive dependency tree (Maven nearest-wins).
+
+   Output format (per project):
+     {:lock-version 1
+      :generated-at <iso-timestamp>
+      :source <relative-path-to-deps-file>
+      :resolved {<lib> {:version <v> :type <:mvn|:git> :depth <n>}}
+      :conflicts {<lib> [<v> ...]}}
+
+   Locks are deterministic given the same inputs. Re-run after upgrade/sync."
+  [{:keys [opts]}]
+  (let [{:keys [root skip-dirs depth tree-depth]
+         :or {root "." depth core/default-depth}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   core/default-skip-dirs)
+        dep-files (core/find-dep-files {:root root :skip-dirs skip-set :depth depth})
+        cache (ba/bounded-atom {:max-entries 500})]
+
+    (println (core/c :bold (format "Generating deps.lock.edn for %d dep files..."
+                                    (count dep-files))))
+    (println)
+
+    (let [locked (atom 0)]
+      (doseq [{:keys [path project] :as df} dep-files
+              :let [content (slurp path)
+                    mvn-deps (core/extract-mvn-deps df content)
+                    git-deps (if (core/shadow-deps-file? df)
+                               []
+                               (mapv (fn [{:keys [lib tag]}]
+                                       {:lib lib :version tag :type :git})
+                                     (v/find-git-deps content)))
+                    direct (vec (concat
+                                 (mapv (fn [{:keys [lib version]}]
+                                         {:lib lib :version version :type :mvn})
+                                       mvn-deps)
+                                 git-deps))
+                    resolve-fn (fn [lib version]
+                                 (core/resolve-dep-children cache lib version))
+                    tree (v/build-dep-tree direct resolve-fn tree-depth)
+                    resolution (v/resolve-versions tree)
+                    lock-data {:lock-version 1
+                               :generated-at (str (java.time.Instant/now))
+                               :source (str (fs/relativize root-dir path))
+                               :resolved (into (sorted-map)
+                                                (for [[lib m] (:resolved resolution)]
+                                                  [lib (select-keys m [:version :type :depth])]))
+                               :conflicts (into (sorted-map)
+                                                 (for [[lib vs] (:conflicts resolution)]
+                                                   [lib (vec (sort vs))]))}
+                    project-dir (fs/parent path)
+                    lock-path (str (fs/path project-dir "deps.lock.edn"))]]
+        (spit lock-path (with-out-str (pp/pprint lock-data)))
+        (swap! locked inc)
+        (println (core/c :green (format "  %s -> %s"
+                                         project
+                                         (str (fs/relativize root-dir lock-path))))))
+
+      (println)
+      (println (core/c :bold (format "Locked: %d project(s)" @locked))))))
+
+(defn deep-lint-cmd
+  "Deep lint: fetch the latest published tag's deps.edn from the forge
+   and check if it still contains :local/root anti-patterns.
+
+   Catches the case where a project was tagged BEFORE bb-depsolve lint --fix
+   ran, so consumers still pull a release pinned to local paths.
+
+   Workspace-level: scans every project with a VERSION + tag remote.
+   Reports lib + tag + locals found. Exits non-zero when any issues found."
+  [{:keys [opts]}]
+  (let [{:keys [root skip-dirs org]
+         :or {root "."}} opts
+        root-dir (str (fs/canonicalize root))
+        skip-set (if skip-dirs
+                   (into #{} (str/split skip-dirs #","))
+                   core/default-skip-dirs)
+        projects (core/find-workspace-projects root-dir skip-set)]
+
+    (when-not org
+      (println (core/c :red "Error: --org is required for deep-lint"))
+      (System/exit 1))
+
+    (println (core/c :bold "Deep-lint: scanning latest tagged releases for :local/root..."))
+    (println)
+
+    (let [issues (atom 0)
+          checked (atom 0)]
+      (doseq [project-dir projects
+              :let [project (str (fs/file-name project-dir))
+                    lib-sym (symbol (str "io.github." org "/" project))
+                    tag-r (core/resolve-lib-tags root-dir lib-sym project)]]
+        (cond
+          (not (and (map? tag-r) (contains? tag-r :ok)))
+          (println (core/c :dim (str "  " project " — no resolvable tag, skipped")))
+
+          :else
+          (let [{:keys [tag]} (:ok tag-r)
+                forge-info (v/parse-forge-lib lib-sym)]
+            (if-not forge-info
+              (println (core/c :dim (str "  " project " — non-forge lib, skipped")))
+              (let [fetched (core/fetch-git-deps-edn (:forge forge-info)
+                                                    (:org forge-info)
+                                                    (:repo forge-info)
+                                                    tag)]
+                (swap! checked inc)
+                (if-not (and (map? fetched) (contains? fetched :ok))
+                  (println (core/c :dim (str "  " project " — could not fetch deps.edn for " tag)))
+                  (let [content (:ok fetched)
+                        locals (v/find-local-deps content)]
+                    (if (empty? locals)
+                      (println (core/c :green (format "  %s @ %s — clean" project tag)))
+                      (do
+                        (swap! issues inc)
+                        (println (core/c :yellow (format "  %s @ %s — %d :local/root dep(s)"
+                                                          project tag (count locals))))
+                        (doseq [{:keys [lib path]} locals]
+                          (println (str "      " (core/c :cyan (str lib))
+                                        " -> " (core/c :yellow path)))))))))))))
+
+      (println)
+      (println (core/c :bold (format "Checked: %d  Issues: %d" @checked @issues)))
+      (when (pos? @issues)
+        (System/exit 1)))))
 
 (defn help-cmd
   "Print help text for available commands."
