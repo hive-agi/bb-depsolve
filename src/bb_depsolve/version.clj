@@ -7,7 +7,9 @@
   (:require [clojure.data.xml :as xml]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [clojure.set :as set]))
+            [clojure.set :as set]
+            [malli.core :as m]
+            [bb-depsolve.schema]))
 
 (defn parse-semver
   "Parse a semver tag like 'v0.4.0' into [major minor patch].
@@ -201,6 +203,46 @@
     (:sha-short resolved-info (:sha resolved-info))
     (:sha resolved-info)))
 
+(defn tag->mvn-version
+  "Convert a git tag to a Maven-style version string by stripping a leading \"v\".
+   \"v0.3.6\" -> \"0.3.6\", \"0.3.6\" -> \"0.3.6\". Total: returns nil for nil."
+  [tag]
+  (when (string? tag)
+    (str/replace tag #"^v" "")))
+
+(defn sync-changes-in-content
+  "Compute sync changes for a single dep file's CONTENT against RESOLVED
+   (map of lib-sym -> {:tag :sha :sha-short}). Pure: no I/O.
+
+   Covers both coord styles:
+     :git — {:git/tag :git/sha} drift (tag or sha mismatch)
+     :mvn — {:mvn/version} drift against tag->mvn-version of the resolved tag
+
+   Returns vec of change maps, each carrying :coord (:git or :mvn):
+     :git -> {:lib :coord :old-tag :old-sha :new-tag :new-sha}
+     :mvn -> {:lib :coord :old-version :new-version}"
+  [content resolved]
+  (let [git-deps (find-git-deps content)
+        mvn-deps (find-mvn-deps content)]
+    (vec
+     (concat
+      (for [{:keys [lib tag sha]} git-deps
+            :when (contains? resolved lib)
+            :let [resolved-info (get resolved lib)
+                  rtag (:tag resolved-info)
+                  rsha (pick-sha sha resolved-info)]
+            :when (or (not= tag rtag) (not (sha-matches? sha rsha)))]
+        {:lib lib :coord :git
+         :old-tag tag :old-sha sha
+         :new-tag rtag :new-sha rsha})
+      (for [{:keys [lib version]} mvn-deps
+            :when (contains? resolved lib)
+            :let [resolved-info (get resolved lib)
+                  rversion (tag->mvn-version (:tag resolved-info))]
+            :when (and rversion (not= version rversion))]
+        {:lib lib :coord :mvn
+         :old-version version :new-version rversion})))))
+
 (defn bump-patch
   "Increment patch version. [0 1 1] -> [0 1 2]"
   [[major minor patch]]
@@ -296,6 +338,20 @@
   "Extract artifact-id from a qualified lib symbol."
   [lib-sym]
   (last (str/split (str lib-sym) #"/")))
+
+(defn canonical-lib
+  "The coordinate a :local/root entry must be keyed on.
+
+   A forge-qualified lib is already canonical. Otherwise, when `org` is known
+   and `local-path` names a sibling checkout, the canonical coordinate is
+   io.github.<org>/<sibling-dir>. Falls back to `lib-sym` unchanged.
+   Pure: no I/O."
+  [lib-sym local-path org]
+  (or (when (parse-github-lib lib-sym) lib-sym)
+      (when org
+        (when-let [dir (infer-sibling-dir local-path)]
+          (symbol (str "io.github." org "/" dir))))
+      lib-sym))
 
 ;; =============================================================================
 ;; Transitive dependency resolution (v0.5.0)
@@ -539,6 +595,22 @@
      :conflicts conflicts
      :occurrences occurrences
      :missing missing}))
+
+(m/=> parse-semver
+      [:=> [:cat [:maybe :string]] [:maybe :bb-depsolve/semver-triple]])
+
+(m/=> version-compare
+      [:=> [:cat [:maybe :string] [:maybe :string]] :int])
+
+(m/=> latest-tag
+      [:=> [:cat [:sequential [:map [:tag :string] [:sha :string]]]]
+       [:maybe :bb-depsolve/resolved-lib]])
+
+(m/=> sync-changes-in-content
+      [:=> [:cat :string :bb-depsolve/resolved] :bb-depsolve/sync-changes])
+
+(m/=> resolve-versions
+      [:=> [:cat [:vector :bb-depsolve/tree-node]] :bb-depsolve/resolution])
 
 (defn format-dep-tree
   "Format dependency tree as indented string lines with ANSI colors.

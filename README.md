@@ -28,9 +28,13 @@ Add to your `bb.edn`:
 
 ## Commands
 
-### `sync` — Sync internal git deps
+### `sync` — Sync internal deps (git + mvn coords)
 
-Finds all `io.github.{org}/*` git deps across your workspace and updates them to the latest tag+sha.
+Finds all `io.github.{org}/*` deps across your workspace and updates them to the latest tag.
+Handles both coordinate styles:
+
+- `:git/tag` + `:git/sha` — tag and sha are updated together
+- `:mvn/version` — version is updated to the latest tag (without the `v` prefix)
 
 ```bash
 bb -m bb-depsolve.cli sync --root . --org hive-agi

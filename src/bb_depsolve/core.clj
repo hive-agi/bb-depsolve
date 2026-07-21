@@ -18,7 +18,8 @@
             [hive-dsl.gate :as gate]
             [hive-dsl.result :as r]
             [bb-depsolve.version :as v]
-            [bb-depsolve.ui :as ui]))
+            [bb-depsolve.ui :as ui]
+            [bb-depsolve.schema :as sch]))
 
 (declare c gum-table gum-filter pad-right visible-len matrix->csv tty? colors format-local-dep-warning)
 
@@ -216,19 +217,20 @@
 (defn resolve-lib-tags
   "Resolve the latest tag+sha for a git lib.
    Uses GitHub remote first, falls back to local clone.
-   Returns Result<{:tag :sha :source}>."
+   Returns Result<{:tag :sha :source}>. The resolved value is
+   schema-validated at this boundary (fail-loud)."
   [root-dir lib-sym dir-name]
   (if-let [{:keys [org repo]} (v/parse-github-lib lib-sym)]
     (let [remote-result (resolve-remote-tags org repo)]
       (if (and (r/ok? remote-result) (seq (:ok remote-result)))
         (if-let [latest (v/latest-tag (:ok remote-result))]
-          (r/ok (assoc latest :source :remote))
+          (r/ok (assoc (sch/validate! :bb-depsolve/resolved-lib latest) :source :remote))
           (r/err :parse/no-semver-tags {:lib lib-sym}))
         (let [local-dir (fs/path root-dir dir-name)]
           (if (fs/directory? (fs/path local-dir ".git"))
             (r/let-ok [tags (resolve-local-tags local-dir)]
                       (if-let [latest (v/latest-tag tags)]
-                        (r/ok (assoc latest :source :local))
+                        (r/ok (assoc (sch/validate! :bb-depsolve/resolved-lib latest) :source :local))
                         (r/err :parse/no-semver-tags {:lib lib-sym})))
             (r/err :io/not-found {:lib lib-sym :dir (str local-dir)})))))
     (r/err :parse/not-github-lib {:lib lib-sym})))
@@ -281,45 +283,48 @@
                 (r/ok latest))))))
 
 (defn discover-internal-libs
-  "Auto-discover internal git deps by scanning dep files for io.github.{org}/* coords.
+  "Auto-discover internal deps by scanning dep files for io.github.{org}/* coords,
+   in both :git/tag+:git/sha and :mvn/version form.
    Returns map of lib-sym -> dir-name."
   [dep-files org]
   (->> dep-files
        (remove shadow-deps-file?)
        (mapcat (fn [{:keys [path]}]
-                 (v/find-git-deps (slurp path))))
+                 (let [content (slurp path)]
+                   (concat (v/find-git-deps content)
+                           (v/find-mvn-deps content)))))
        (filter #(v/lib-matches-org? org (:lib %)))
        (map (fn [{:keys [lib]}]
               [lib (v/lib-artifact-id lib)]))
        (into {})))
 
 (defn compute-sync-changes
-  "Compute sync changes between dep files and resolved lib versions. Pure."
+  "Compute sync changes between dep files and resolved lib versions.
+   Covers both git coords (:git/tag+:git/sha) and maven coords (:mvn/version).
+   Pure calculation delegated to bb-depsolve.version/sync-changes-in-content.
+   Each change map carries :coord (:git or :mvn) plus :path/:project.
+   Output is schema-validated at this boundary (fail-loud)."
   [dep-files resolved]
   (->> dep-files
        (remove shadow-deps-file?)
        (mapcat (fn [{:keys [path project]}]
-                 (let [content (slurp path)
-                       git-deps (v/find-git-deps content)]
-                   (for [{:keys [lib tag sha]} git-deps
-                         :when (contains? resolved lib)
-                         :let [resolved-info (get resolved lib)
-                               rtag (:tag resolved-info)
-                               rsha (v/pick-sha sha resolved-info)]
-                         :when (or (not= tag rtag) (not (v/sha-matches? sha rsha)))]
-                     {:path path :project project :lib lib
-                      :old-tag tag :old-sha sha
-                      :new-tag rtag :new-sha rsha}))))
-       (vec)))
+                 (->> (v/sync-changes-in-content (slurp path) resolved)
+                      (map #(assoc % :path path :project project)))))
+       (vec)
+       (sch/validate! :bb-depsolve/sync-changes)))
 
-(defn apply-git-changes!
-  "Apply git dep changes to files. Action: writes to disk."
+(defn apply-sync-changes!
+  "Apply sync changes to files, dispatching on :coord.
+   :git entries update :git/tag+:git/sha; :mvn entries update :mvn/version.
+   Action: writes to disk."
   [root-dir changes]
   (let [by-file (group-by :path changes)]
     (doseq [[path file-changes] by-file
             :let [content (atom (slurp path))]]
-      (doseq [{:keys [lib new-tag new-sha]} file-changes]
-        (swap! content v/update-git-dep lib new-tag new-sha))
+      (doseq [{:keys [coord lib new-tag new-sha new-version]} file-changes]
+        (if (= coord :mvn)
+          (swap! content v/update-mvn-dep lib new-version)
+          (swap! content v/update-git-dep lib new-tag new-sha)))
       (spit path @content)
       (println (c :green (str "  Updated " (str (fs/relativize root-dir path))))))
     (println)
@@ -342,7 +347,7 @@
                                (count upgrades) (count by-file))))))
 
 (defn sync-cmd
-  "Sync internal git deps across all workspace projects."
+  "Sync internal deps (git tag+sha and maven version coords) across all workspace projects."
   [{:keys [opts]}]
   (let [{:keys [root org apply commit skip-dirs depth]
          :or {root "." depth default-depth}} opts
@@ -383,17 +388,22 @@
             (do
               (println (c :yellow (format "%d mismatches found:" (count changes))))
               (println)
-              (doseq [{:keys [project lib old-tag old-sha new-tag new-sha]} changes]
-                (printf "  %-25s %-35s %s %s -> %s %s\n"
-                        (c :cyan project) (str lib)
-                        (c :red old-tag) (c :dim old-sha)
-                        (c :green new-tag) (c :dim new-sha)))
+              (doseq [{:keys [coord project lib old-tag old-sha new-tag new-sha
+                              old-version new-version]} changes]
+                (if (= coord :mvn)
+                  (printf "  %-25s %-35s %s -> %s  (mvn)\n"
+                          (c :cyan project) (str lib)
+                          (c :red old-version) (c :green new-version))
+                  (printf "  %-25s %-35s %s %s -> %s %s\n"
+                          (c :cyan project) (str lib)
+                          (c :red old-tag) (c :dim old-sha)
+                          (c :green new-tag) (c :dim new-sha))))
               (println)
               (if apply
-                (do (apply-git-changes! root-dir changes)
+                (do (apply-sync-changes! root-dir changes)
                     (when commit
                       (auto-commit-workspace! root-dir dep-files
-                                              "chore: sync internal git deps (bb-depsolve)")))
+                                              "chore: sync internal deps (bb-depsolve)")))
                 (println (c :dim "  Dry run. Pass --apply to write changes."))))))))))
 
 (defn upgrade-cmd
@@ -545,12 +555,17 @@
       (println (c :green (str "  Added '" entry "' to .gitignore"))))))
 
 (defn- generate-local-deps-edn
-  "Generate local.deps.edn content from local dep entries."
-  [local-entries]
+  "Generate local.deps.edn content from local dep entries.
+
+   Entries are keyed on their CANONICAL coordinate — the same symbol the
+   deps.edn rewrite installs — because a :local/root under any other group id
+   is not an override at all, it is an additional unrelated library."
+  [local-entries org]
   (let [header ";; local.deps.edn — machine-specific overrides, DO NOT COMMIT\n;; Auto-generated by bb-depsolve lint --fix\n;;\n;; Usage with clj:  clj -Sdeps \"$(cat local.deps.edn)\"\n;; Usage with bb:    add {:local/root ...} overrides to bb.edn aliases\n"
         deps-str (->> local-entries
                       (map (fn [{:keys [lib path]}]
-                             (str "  " lib " {:local/root \"" path "\"}")))
+                             (str "  " (v/canonical-lib lib path org)
+                                  " {:local/root \"" path "\"}")))
                       (str/join "\n"))]
     (str header "\n{:deps\n {" (str/trim deps-str) "}}\n")))
 
@@ -613,7 +628,7 @@
                       (println (c :yellow (str "  Skipped " (str (fs/relativize root-dir local-deps-path))
                                                " (already exists — merge manually)")))
                       (do
-                        (spit local-deps-path (generate-local-deps-edn locals))
+                        (spit local-deps-path (generate-local-deps-edn locals org))
                         (println (c :green (str "  Created " (str (fs/relativize root-dir local-deps-path))))))))
 
                   (ensure-gitignore-entry! project-dir "local.deps.edn")
@@ -642,11 +657,11 @@
                           (if-let [latest (and (r/ok? local-tag) (v/latest-tag (:ok local-tag)))]
                             (let [{:keys [tag sha]} latest
                                   use-sha (if (<= (count sha) 12) sha (subs sha 0 7))
-                                  canonical (when org (symbol (str "io.github." org "/" sibling-dir)))]
+                                  canonical (v/canonical-lib lib path org)]
                               (swap! updated-content v/replace-local-with-git lib tag use-sha canonical)
                               (swap! replaced inc)
                               (println (str "  " (c :cyan (str lib))
-                                            (when canonical (str " -> " (c :cyan (str canonical))))
+                                            (when (not= canonical lib) (str " -> " (c :cyan (str canonical))))
                                             " -> " (c :green tag) " " (c :dim use-sha)
                                             " (local sibling: " sibling-dir ")")))
                             (let [mvn-result (resolve-mvn-latest lib false)]
@@ -847,17 +862,20 @@
    Filters out coords whose key fields still contain `${...}` placeholders
    AFTER POM parsing (see bb-depsolve.version/filter-resolved-coords). Dropped
    coords are logged via `warn-unresolved-coord` (not silently swallowed).
-   Returns Result<[{:lib :version}]>."
+   Returns Result<[{:lib :version}]>, schema-validated at this boundary
+   (fail-loud)."
   [group-id artifact-id version]
   (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
         pom-xml (let [r1 (fetch-pom-xml clojars-url)]
                   (if (r/ok? r1) r1 (fetch-pom-xml maven-url)))
         parent  {:group group-id :artifact artifact-id :version version}
         warn-fn (partial warn-unresolved-coord parent)
-        filter-step (fn [coords] (v/filter-resolved-coords coords warn-fn))]
+        filter-step (fn [coords] (v/filter-resolved-coords coords warn-fn))
+        validate-step (fn [coords] (sch/validate! :bb-depsolve/pom-deps coords))]
     (r/ok-> pom-xml
             v/parse-pom-deps-raw
-            filter-step)))
+            filter-step
+            validate-step)))
 
 (defn- fetch-git-deps-edn
   "Fetch raw deps.edn content from a forge. Returns Result<string>.

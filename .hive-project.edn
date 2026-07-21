@@ -2,4 +2,5 @@
  :parent "hive"
  :description "Generic monorepo dependency sync, upgrade & reporting tool for babashka"
  :language :clojure
- :tags ["deps" "sync" "upgrade" "monorepo" "babashka"]}
+ :tags ["deps" "sync" "upgrade" "monorepo" "babashka"] 
+ :carto {:source-roots ["src" "test" "test-model"]}}

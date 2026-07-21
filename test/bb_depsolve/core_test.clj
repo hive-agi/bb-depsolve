@@ -282,6 +282,62 @@
     (is (= "0.0.0" (v/semver->version [0 0 0])))
     (is (= "10.20.30" (v/semver->version [10 20 30])))))
 
+(deftest tag->mvn-version-test
+  (testing "strips leading v"
+    (is (= "0.3.6" (v/tag->mvn-version "v0.3.6")))
+    (is (= "1.0.0-alpha" (v/tag->mvn-version "v1.0.0-alpha"))))
+
+  (testing "no v prefix passes through"
+    (is (= "0.3.6" (v/tag->mvn-version "0.3.6"))))
+
+  (testing "nil returns nil"
+    (is (nil? (v/tag->mvn-version nil)))))
+
+(deftest sync-changes-in-content-test
+  (let [resolved '{io.github.hive-agi/hive-test {:tag "v0.3.6"
+                                                 :sha "2fe7a14aaaaaaa"
+                                                 :sha-short "2fe7a14"}
+                   io.github.hive-agi/hive-mcp  {:tag "v0.18.0"
+                                                 :sha "088c7dfbbbbbbb"
+                                                 :sha-short "088c7df"}}]
+
+    (testing "git drift detected (tag and sha)"
+      (is (= [{:lib 'io.github.hive-agi/hive-test :coord :git
+               :old-tag "v0.3.0" :old-sha "763e4bc"
+               :new-tag "v0.3.6" :new-sha "2fe7a14"}]
+             (v/sync-changes-in-content
+              "{:deps {io.github.hive-agi/hive-test {:git/tag \"v0.3.0\" :git/sha \"763e4bc\"}}}"
+              resolved))))
+
+    (testing "mvn drift detected against tag->mvn-version"
+      (is (= [{:lib 'io.github.hive-agi/hive-test :coord :mvn
+               :old-version "0.3.0" :new-version "0.3.6"}]
+             (v/sync-changes-in-content
+              "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.0\"}}}"
+              resolved))))
+
+    (testing "in-sync coords produce no changes"
+      (is (= [] (v/sync-changes-in-content
+                 "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.6\"}
+                          io.github.hive-agi/hive-mcp {:git/tag \"v0.18.0\" :git/sha \"088c7df\"}}}"
+                 resolved))))
+
+    (testing "unresolved libs are ignored"
+      (is (= [] (v/sync-changes-in-content
+                 "{:deps {cheshire/cheshire {:mvn/version \"5.13.0\"}}}"
+                 resolved))))
+
+    (testing "mixed git and mvn drift in one file"
+      (is (= #{{:lib 'io.github.hive-agi/hive-test :coord :mvn
+                :old-version "0.2.1" :new-version "0.3.6"}
+               {:lib 'io.github.hive-agi/hive-mcp :coord :git
+                :old-tag "v0.16.7" :old-sha "0222203"
+                :new-tag "v0.18.0" :new-sha "088c7df"}}
+             (set (v/sync-changes-in-content
+                   "{:deps {io.github.hive-agi/hive-mcp {:git/tag \"v0.16.7\" :git/sha \"0222203\"}
+                            io.github.hive-agi/hive-test {:mvn/version \"0.2.1\"}}}"
+                   resolved)))))))
+
 ;; =============================================================================
 ;; Transitive dependency resolution (v0.5.0)
 ;; =============================================================================
