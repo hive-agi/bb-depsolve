@@ -2,6 +2,7 @@
   "Unit tests for bb-depsolve pure calculations (version.clj layer)."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [bb-depsolve.core :as core]
             [bb-depsolve.version :as v]))
 
 (deftest parse-semver-test
@@ -296,7 +297,8 @@
 (deftest sync-changes-in-content-test
   (let [resolved '{io.github.hive-agi/hive-test {:tag "v0.3.6"
                                                  :sha "2fe7a14aaaaaaa"
-                                                 :sha-short "2fe7a14"}
+                                                 :sha-short "2fe7a14"
+                                                 :mvn-version "0.3.5"}
                    io.github.hive-agi/hive-mcp  {:tag "v0.18.0"
                                                  :sha "088c7dfbbbbbbb"
                                                  :sha-short "088c7df"}}]
@@ -309,16 +311,22 @@
               "{:deps {io.github.hive-agi/hive-test {:git/tag \"v0.3.0\" :git/sha \"763e4bc\"}}}"
               resolved))))
 
-    (testing "mvn drift detected against tag->mvn-version"
+    (testing "mvn drift detected against published registry version, not tag"
       (is (= [{:lib 'io.github.hive-agi/hive-test :coord :mvn
-               :old-version "0.3.0" :new-version "0.3.6"}]
+               :old-version "0.3.0" :new-version "0.3.5"}]
              (v/sync-changes-in-content
               "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.0\"}}}"
               resolved))))
 
+    (testing "tag-only resolution never mutates a Maven coordinate"
+      (is (= []
+             (v/sync-changes-in-content
+              "{:deps {io.github.hive-agi/hive-mcp {:mvn/version \"0.17.0\"}}}"
+              resolved))))
+
     (testing "in-sync coords produce no changes"
       (is (= [] (v/sync-changes-in-content
-                 "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.6\"}
+                 "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.5\"}
                           io.github.hive-agi/hive-mcp {:git/tag \"v0.18.0\" :git/sha \"088c7df\"}}}"
                  resolved))))
 
@@ -329,7 +337,7 @@
 
     (testing "mixed git and mvn drift in one file"
       (is (= #{{:lib 'io.github.hive-agi/hive-test :coord :mvn
-                :old-version "0.2.1" :new-version "0.3.6"}
+                :old-version "0.2.1" :new-version "0.3.5"}
                {:lib 'io.github.hive-agi/hive-mcp :coord :git
                 :old-tag "v0.16.7" :old-sha "0222203"
                 :new-tag "v0.18.0" :new-sha "088c7df"}}
@@ -337,6 +345,33 @@
                    "{:deps {io.github.hive-agi/hive-mcp {:git/tag \"v0.16.7\" :git/sha \"0222203\"}
                             io.github.hive-agi/hive-test {:mvn/version \"0.2.1\"}}}"
                    resolved)))))))
+
+(deftest discover-internal-libs-preserves-coordinate-kinds-test
+  (with-redefs [slurp (constantly
+                       "{:deps {io.github.hive-agi/hive-shape {:mvn/version \"0.2.20\"}
+                                io.github.hive-agi/hive-test {:git/tag \"v0.3.7\" :git/sha \"abcdef0\"
+                                                              :mvn/version \"0.3.7\"}
+                                outsider/lib {:mvn/version \"1.0.0\"}}}")]
+    (is (= {'io.github.hive-agi/hive-shape {:dir-name "hive-shape" :coords #{:mvn}}
+            'io.github.hive-agi/hive-test {:dir-name "hive-test" :coords #{:git :mvn}}}
+           (core/discover-internal-libs [{:path "deps.edn" :type :deps-edn}] "hive-agi")))))
+
+(deftest resolve-sync-lib-uses-authoritative-source-per-coordinate-test
+  (testing "Maven-only lib does not require a GitHub tag"
+    (with-redefs [core/resolve-lib-tags (fn [& _] (throw (ex-info "must not run" {})))
+                  core/resolve-mvn-latest (fn [& _] {:ok "0.2.21"})]
+      (is (= {:ok {:mvn-version "0.2.21"}}
+             (core/resolve-sync-lib "." 'io.github.hive-agi/hive-shape
+                                    {:dir-name "hive-shape" :coords #{:mvn}})))))
+  (testing "mixed lib keeps tag and independently published Maven version"
+    (with-redefs [core/resolve-lib-tags (fn [& _]
+                                         {:ok {:tag "v0.1.8" :sha "abcdef0123456789"
+                                               :sha-short "abcdef0" :source :remote}})
+                  core/resolve-mvn-latest (fn [& _] {:ok "0.1.5"})]
+      (is (= {:ok {:tag "v0.1.8" :sha "abcdef0123456789" :sha-short "abcdef0"
+                   :source :remote :mvn-version "0.1.5"}}
+             (core/resolve-sync-lib "." 'io.github.hive-agi/hive-schemas
+                                    {:dir-name "hive-schemas" :coords #{:git :mvn}}))))))
 
 ;; =============================================================================
 ;; Transitive dependency resolution (v0.5.0)

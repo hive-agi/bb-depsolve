@@ -121,7 +121,7 @@
       (println)
       (println "  Phase 1: upgrade    — fetch latest external deps")
       (println "  Phase 2: lint --fix — resolve :local/root to git tags")
-      (println "  Phase 3: sync       — align internal git deps to latest tags")
+      (println "  Phase 3: sync       — align internal Git tags and published Maven versions")
       (println "  Phase 4: bump-wave  — bump all projects with commits ahead")
       (println "  Phase 5: re-sync    — propagate new tags from bumps")
       (println "  Phase 6: push-all   — push everything to remotes")
@@ -147,7 +147,7 @@
       (println)
 
       ;; Phase 3: Sync internal deps
-      (println (core/c :bold "═══ Phase 3: Syncing internal git deps ═══"))
+      (println (core/c :bold "═══ Phase 3: Syncing internal Git and Maven deps ═══"))
       (println)
       (core/sync-cmd {:opts (assoc base-opts :apply true :commit true)})
       (println)

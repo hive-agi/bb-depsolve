@@ -212,11 +212,11 @@
 
 (defn sync-changes-in-content
   "Compute sync changes for a single dep file's CONTENT against RESOLVED
-   (map of lib-sym -> {:tag :sha :sha-short}). Pure: no I/O.
+   (map of lib-sym -> {:tag :sha :sha-short :mvn-version}). Pure: no I/O.
 
    Covers both coord styles:
      :git — {:git/tag :git/sha} drift (tag or sha mismatch)
-     :mvn — {:mvn/version} drift against tag->mvn-version of the resolved tag
+     :mvn — {:mvn/version} drift against a published registry version
 
    Returns vec of change maps, each carrying :coord (:git or :mvn):
      :git -> {:lib :coord :old-tag :old-sha :new-tag :new-sha}
@@ -231,14 +231,15 @@
             :let [resolved-info (get resolved lib)
                   rtag (:tag resolved-info)
                   rsha (pick-sha sha resolved-info)]
-            :when (or (not= tag rtag) (not (sha-matches? sha rsha)))]
+            :when (and rtag rsha
+                       (or (not= tag rtag) (not (sha-matches? sha rsha))))]
         {:lib lib :coord :git
          :old-tag tag :old-sha sha
          :new-tag rtag :new-sha rsha})
       (for [{:keys [lib version]} mvn-deps
             :when (contains? resolved lib)
             :let [resolved-info (get resolved lib)
-                  rversion (tag->mvn-version (:tag resolved-info))]
+                  rversion (:mvn-version resolved-info)]
             :when (and rversion (not= version rversion))]
         {:lib lib :coord :mvn
          :old-version version :new-version rversion})))))

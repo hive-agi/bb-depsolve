@@ -279,6 +279,31 @@
   []
   (System/getenv "MAVEN_URL"))
 
+(defn maven-cache-dir
+  "Local Maven repository used for cached remote metadata. M2_REPO overrides
+   ~/.m2/repository."
+  []
+  (or (System/getenv "M2_REPO")
+      (str (fs/path (System/getProperty "user.home") ".m2" "repository"))))
+
+(defn resolve-cached-maven-latest
+  "Resolve latest version from Maven's cached REMOTE metadata.
+   Ignores maven-metadata-local.xml so locally installed/deployed-only versions
+   cannot masquerade as published artifacts. Returns Result<string>."
+  [group artifact allow-pre?]
+  (r/try-effect*
+   :io/maven-cache
+   (let [artifact-dir (fs/path (maven-cache-dir) (v/group-id->path group) artifact)
+         metadata-files (when (fs/directory? artifact-dir)
+                          (->> (fs/glob artifact-dir "maven-metadata-*.xml")
+                               (remove #(= "maven-metadata-local.xml" (str (fs/file-name %))))))
+         versions (->> metadata-files
+                       (mapcat #(v/parse-maven-metadata-versions (slurp (str %))))
+                       (filter #(or allow-pre? (not (v/pre-release? %)))))]
+     (or (last (sort v/version-compare versions))
+         (throw (ex-info "No cached remote Maven metadata version"
+                         {:group group :artifact artifact}))))))
+
 (defn resolve-gitea-latest
   "Resolve latest PUBLISHED version from the private Gitea Maven registry.
    Returns Result<string>. GETs maven-metadata.xml (with :gitea auth), then
@@ -299,8 +324,9 @@
   "Resolve latest PUBLISHED version across registries. Returns Result<string>.
 
    Always consults Clojars (falling back to Maven Central). When MAVEN_URL is
-   set, ALSO consults the private Gitea Maven registry, returning the NEWEST
-   version across whichever sources succeed (compared via version-compare).
+   set, ALSO consults the private Gitea Maven registry plus Maven's cached
+   remote metadata, returning the NEWEST version across whichever sources
+   succeed (compared via version-compare).
    Filters pre-releases unless allow-pre? is true. Errs when no source yields
    an acceptable published version."
   [lib-sym allow-pre?]
@@ -310,7 +336,8 @@
         gitea-base (gitea-registry-url)
         candidates (cond-> [(let [c (resolve-clojars-latest group artifact)]
                               (if (r/ok? c) c (resolve-maven-latest group artifact)))]
-                     gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)))
+                     gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)
+                                      (resolve-cached-maven-latest group artifact allow-pre?)))
         versions (->> candidates
                       (filter r/ok?)
                       (map :ok)
@@ -323,18 +350,37 @@
 (defn discover-internal-libs
   "Auto-discover internal deps by scanning dep files for io.github.{org}/* coords,
    in both :git/tag+:git/sha and :mvn/version form.
-   Returns map of lib-sym -> dir-name."
+   Returns map of lib-sym -> {:dir-name string :coords #{:git|:mvn}}."
   [dep-files org]
   (->> dep-files
        (remove shadow-deps-file?)
        (mapcat (fn [{:keys [path]}]
                  (let [content (slurp path)]
-                   (concat (v/find-git-deps content)
-                           (v/find-mvn-deps content)))))
+                   (concat (map #(assoc % :coord :git) (v/find-git-deps content))
+                           (map #(assoc % :coord :mvn) (v/find-mvn-deps content))))))
        (filter #(v/lib-matches-org? org (:lib %)))
-       (map (fn [{:keys [lib]}]
-              [lib (v/lib-artifact-id lib)]))
-       (into {})))
+       (reduce (fn [libs {:keys [lib coord]}]
+                 (-> libs
+                     (assoc-in [lib :dir-name] (v/lib-artifact-id lib))
+                     (update-in [lib :coords] (fnil conj #{}) coord)))
+               {})))
+
+(defn resolve-sync-lib
+  "Resolve only coordinate kinds actually used for an internal lib.
+   Git coords come from tags. Maven coords come from published registries.
+   Returns a partial resolved-lib when either coordinate kind succeeds."
+  [root-dir lib-sym {:keys [dir-name coords]}]
+  (let [tag-result (when (contains? coords :git)
+                     (resolve-lib-tags root-dir lib-sym dir-name))
+        mvn-result (when (contains? coords :mvn)
+                     (resolve-mvn-latest lib-sym false))
+        tag-info (when (r/ok? tag-result) (:ok tag-result))
+        mvn-version (when (r/ok? mvn-result) (:ok mvn-result))
+        resolved (cond-> (or tag-info {})
+                   mvn-version (assoc :mvn-version mvn-version))]
+    (if (seq resolved)
+      (r/ok (sch/validate! :bb-depsolve/resolved-lib resolved))
+      (r/err :io/no-resolved-coordinate {:lib lib-sym :coords coords}))))
 
 (defn compute-sync-changes
   "Compute sync changes between dep files and resolved lib versions.
@@ -400,21 +446,26 @@
       (System/exit 1))
 
     (let [internal-libs (discover-internal-libs dep-files org)]
-      (println (c :bold (format "Resolving %s tags (%d libs)..." (str "io.github." org) (count internal-libs))))
+      (println (c :bold (format "Resolving %s coordinates (%d libs)..." (str "io.github." org) (count internal-libs))))
       (println)
 
-      (let [resolved (into {}
-                           (for [[lib-sym dir-name] internal-libs
-                                 :let [result (resolve-lib-tags root-dir lib-sym dir-name)]
+      (let [results (into {}
+                          (for [[lib-sym discovery] internal-libs]
+                            [lib-sym (resolve-sync-lib root-dir lib-sym discovery)]))
+            resolved (into {}
+                           (for [[lib-sym result] results
                                  :when (r/ok? result)]
                              [lib-sym (:ok result)]))]
 
-        (doseq [[lib-sym {:keys [tag sha-short sha source]}] (sort-by (comp str key) resolved)]
-          (printf "  %-40s %s -> %s  (%s)\n"
-                  (c :cyan (str lib-sym))
-                  (c :green tag)
-                  (c :dim (or sha-short sha))
-                  (name source)))
+        (doseq [[lib-sym {:keys [tag sha-short sha mvn-version]}] (sort-by (comp str key) resolved)]
+          (println (str "  " (c :cyan (str lib-sym))
+                        (when tag
+                          (str "  git=" (c :green tag) "@" (c :dim (or sha-short sha))))
+                        (when mvn-version
+                          (str "  mvn=" (c :green mvn-version))))))
+        (doseq [[lib-sym result] (sort-by (comp str key) results)
+                :when (not (r/ok? result))]
+          (println (c :yellow (str "  " lib-sym " — no requested coordinate resolved; skipped"))))
         (println)
 
         (println (c :bold (format "Scanning %d dep files..." (count dep-files))))

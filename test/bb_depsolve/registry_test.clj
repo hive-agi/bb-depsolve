@@ -28,7 +28,8 @@
   (with-redefs [core/gitea-registry-url (constantly "https://registry.example/maven")
                 core/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
                 core/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
-                core/resolve-gitea-latest (fn [& _] (r/ok "0.1.3"))]
+                core/resolve-gitea-latest (fn [& _] (r/ok "0.1.3"))
+                core/resolve-cached-maven-latest (fn [& _] (r/ok "0.1.1"))]
     (is (= {:ok "0.1.3"}
            (core/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
 
@@ -36,6 +37,21 @@
   (with-redefs [core/gitea-registry-url (constantly "https://registry.example/maven")
                 core/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
                 core/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
-                core/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))]
-    (is (= {:ok "0.1.2"}
+                core/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))
+                core/resolve-cached-maven-latest (fn [& _] (r/ok "0.1.3"))]
+    (is (= {:ok "0.1.3"}
            (core/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
+
+(deftest cached-maven-metadata-ignores-local-installs-test
+  (let [cache-dir (str (java.nio.file.Files/createTempDirectory
+                        "bb-depsolve-m2-" (make-array java.nio.file.attribute.FileAttribute 0)))
+        artifact-dir (str cache-dir "/io/github/hive-agi/hive-shape")]
+    (.mkdirs (java.io.File. artifact-dir))
+    (spit (str artifact-dir "/maven-metadata-gitea.xml")
+          metadata)
+    (spit (str artifact-dir "/maven-metadata-local.xml")
+          "<metadata><versioning><versions><version>9.9.9</version></versions></versioning></metadata>")
+    (with-redefs [core/maven-cache-dir (constantly cache-dir)]
+      (is (= {:ok "0.1.3"}
+             (core/resolve-cached-maven-latest
+              "io.github.hive-agi" "hive-shape" false))))))
