@@ -5,10 +5,10 @@
         org.babashka/cli {:mvn/version "0.8.67"}
         cheshire/cheshire {:mvn/version "6.2.0"}
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
-        io.github.hive-agi/hive-dsl {:mvn/version "0.5.5"}
+        io.github.hive-agi/hive-dsl {:mvn/version "0.5.6"}
         metosin/malli {:mvn/version "0.20.1"}
-        io.github.hive-agi/hive-spi {:git/tag "v0.1.7" :git/sha "c1aa910"}
-        io.github.hive-agi/hive-schemas {:mvn/version "0.1.6"}}
+        io.github.hive-agi/hive-spi {:git/tag "v0.1.8" :git/sha "545deb3"}
+        io.github.hive-agi/hive-schemas {:mvn/version "0.1.9"}}
  :aliases
  {  ;; :build — tools.build entrypoint (clojure -T:build <task>). Canonical hive
   ;; build: jar / jar-aot / install / bump / verify-license / deploy.
@@ -18,7 +18,7 @@
 
   :test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
-                      io.github.hive-agi/hive-test {:git/tag "v0.3.8" :git/sha "bbb505c"}
+                      io.github.hive-agi/hive-test {:git/tag "v0.3.9" :git/sha "a3727cb"}
                       io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
          :main-opts ["-m" "cognitect.test-runner"]
@@ -27,5 +27,5 @@
  :extra-deps {org.clojure/clojure {:mvn/version "1.12.1"}
               pfeodrippe/recife {:mvn/version "0.22.0"}
               io.github.hive-agi/hive-recife {:git/sha "2734b324642afac34fed6803495819343481121f"}
-              io.github.hive-agi/hive-spi {:git/tag "v0.1.7" :git/sha "c1aa910"}}
+              io.github.hive-agi/hive-spi {:git/tag "v0.1.8" :git/sha "545deb3"}}
  :main-opts ["-m" "bb-depsolve.sync-model"]}}}
