@@ -72,6 +72,47 @@
        (sort-by #(parse-semver (:tag %)))
        last))
 
+(defn- tag-entry
+  [tag sha]
+  {:tag tag
+   :sha sha
+   :sha-short (subs sha 0 (min 7 (count sha)))})
+
+(defn parse-local-tag-output
+  "Parse `git tag --format` output containing tag, peeled object, and direct
+   object columns. Annotated tags use peeled commit SHA; lightweight tags use
+   direct object SHA. Malformed lines are ignored. Pure."
+  [output]
+  (->> (str/split-lines (or output ""))
+       (keep (fn [line]
+               (let [[tag peeled direct] (str/split line #"\t" -1)
+                     sha (if (str/blank? peeled) direct peeled)]
+                 (when (and (not (str/blank? tag)) (not (str/blank? sha)))
+                   (tag-entry tag sha)))))
+       vec))
+
+(defn parse-ls-remote-tags
+  "Parse `git ls-remote --tags` output. For annotated tags, prefer the peeled
+   `^{}' commit SHA over the tag-object SHA regardless of line order. Pure."
+  [output]
+  (->> (str/split-lines (or output ""))
+       (reduce (fn [tags line]
+                 (let [[sha ref] (str/split line #"\t" 2)
+                       peeled? (str/ends-with? (or ref "") "^{}")
+                       tag (some-> ref
+                                   (str/replace #"^refs/tags/" "")
+                                   (str/replace #"\^\{\}$" ""))
+                       old (get tags tag)]
+                   (if (or (str/blank? sha) (str/blank? tag))
+                     tags
+                     (cond
+                       peeled? (assoc tags tag (assoc (tag-entry tag sha) ::peeled? true))
+                       (::peeled? old) tags
+                       :else (assoc tags tag (tag-entry tag sha))))))
+               (array-map))
+       vals
+       (mapv #(dissoc % ::peeled?))))
+
 (defn find-git-deps
   "Find all git deps in file content string.
    Returns vec of {:lib :tag :sha :match}. Pure: no I/O."

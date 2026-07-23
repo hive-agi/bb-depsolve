@@ -196,13 +196,10 @@
   (r/try-effect*
    :io/git-local-tags
    (let [result (proc/sh ["git" "-C" (str repo-dir) "tag" "--sort=-version:refname"
-                          "-l" "v*" "--format=%(refname:short) %(objectname:short)"])]
+                          "-l" "v*"
+                          "--format=%(refname:short)%09%(*objectname)%09%(objectname)"])]
      (if (zero? (:exit result))
-       (->> (str/split-lines (:out result))
-            (remove str/blank?)
-            (mapv (fn [line]
-                    (let [[tag sha] (str/split line #"\s+" 2)]
-                      {:tag tag :sha sha}))))
+       (v/parse-local-tag-output (:out result))
        (throw (ex-info "git tag failed" {:exit (:exit result)}))))))
 
 (defn resolve-remote-tags
@@ -213,13 +210,7 @@
    (let [url (format github-url org repo)
          result (proc/sh ["git" "ls-remote" "--tags" "--sort=-version:refname" url])]
      (if (zero? (:exit result))
-       (->> (str/split-lines (:out result))
-            (remove str/blank?)
-            (remove #(str/includes? % "^{}"))
-            (mapv (fn [line]
-                    (let [[sha ref] (str/split line #"\t" 2)
-                          tag (str/replace ref "refs/tags/" "")]
-                      {:tag tag :sha sha :sha-short (subs sha 0 7)}))))
+       (v/parse-ls-remote-tags (:out result))
        (throw (ex-info "git ls-remote failed" {:exit (:exit result)}))))))
 
 (defn resolve-lib-tags
