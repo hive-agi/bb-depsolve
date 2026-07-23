@@ -422,6 +422,35 @@
     (str/replace group-id "." "/")
     ""))
 
+(defn maven-metadata-url
+  "Maven metadata.xml URL for an artifact under a repo base. Pure string.
+   base-url e.g. \"https://gitea.hive-mcp.com/api/packages/hive-agi/maven\"."
+  [base-url group-id artifact-id]
+  (format "%s/%s/%s/maven-metadata.xml"
+          (str/replace (str base-url) #"/+$" "")
+          (group-id->path group-id) artifact-id))
+
+(defn parse-maven-metadata-versions
+  "All <version> strings under <versioning><versions>. Total: [] on nil/unparseable."
+  [xml-string]
+  (try
+    (let [p (xml/parse-str xml-string)
+          tag= (fn [el t] (and (map? el) (keyword? (:tag el)) (= (name (:tag el)) t)))
+          find1 (fn [parent t] (first (filter #(tag= % t) (:content parent))))
+          text (fn [el] (when el (str/trim (apply str (filter string? (:content el))))))
+          versioning (find1 p "versioning")
+          versions-el (find1 versioning "versions")]
+      (->> (:content versions-el) (filter #(tag= % "version")) (mapv text) (remove str/blank?) vec))
+    (catch Exception _ [])))
+
+(defn latest-published-version
+  "MAX stable version from <versions> (robust to a stale <latest>). Pure.
+   opts {:allow-pre? bool}. Returns nil when none."
+  [xml-string {:keys [allow-pre?]}]
+  (let [vs (parse-maven-metadata-versions xml-string)
+        vs (if allow-pre? vs (remove pre-release? vs))]
+    (when (seq vs) (last (sort version-compare vs)))))
+
 (defn pom-urls
   "Return [clojars-url maven-central-url] for a Maven artifact.
    Pure: computes URL strings only."
@@ -611,6 +640,13 @@
 
 (m/=> resolve-versions
       [:=> [:cat [:vector :bb-depsolve/tree-node]] :bb-depsolve/resolution])
+
+(m/=> parse-maven-metadata-versions
+      [:=> [:cat [:maybe :string]] [:vector :string]])
+
+(m/=> latest-published-version
+      [:=> [:cat [:maybe :string] [:map [:allow-pre? {:optional true} [:maybe :boolean]]]]
+       [:maybe :string]])
 
 (defn format-dep-tree
   "Format dependency tree as indented string lines with ANSI colors.

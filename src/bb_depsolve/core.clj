@@ -44,6 +44,7 @@
      :gitlab   GITLAB_TOKEN              -> {PRIVATE-TOKEN <t>}
      :codeberg CODEBERG_TOKEN            -> {Authorization \"token <t>\"}
      :clojars  CLOJARS_USERNAME+_PASSWORD-> {Authorization \"Basic <b64>\"}
+     :gitea    MAVEN_USERNAME+MAVEN_TOKEN-> {Authorization \"Basic <b64>\"}
      :maven    MAVEN_AUTH (raw header)   -> {Authorization <raw>}
      other                               -> {}"
   [target]
@@ -56,6 +57,13 @@
                 {"Authorization" (str "token " t)})
     :clojars  (let [u (System/getenv "CLOJARS_USERNAME")
                     p (System/getenv "CLOJARS_PASSWORD")]
+                (when (and u p)
+                  {"Authorization"
+                   (str "Basic "
+                        (.encodeToString (java.util.Base64/getEncoder)
+                                         (.getBytes (str u ":" p))))}))
+    :gitea    (let [u (System/getenv "MAVEN_USERNAME")
+                    p (System/getenv "MAVEN_TOKEN")]
                 (when (and u p)
                   {"Authorization"
                    (str "Basic "
@@ -265,22 +273,52 @@
            (throw (ex-info "No latestVersion" {:group group-id :artifact artifact-id})))
        (throw (ex-info "Maven HTTP error" {:status (:status resp)}))))))
 
+(defn gitea-registry-url
+  "Base URL of the private Gitea Maven registry, read from MAVEN_URL, or nil.
+   nil disables Gitea as a resolution source."
+  []
+  (System/getenv "MAVEN_URL"))
+
+(defn resolve-gitea-latest
+  "Resolve latest PUBLISHED version from the private Gitea Maven registry.
+   Returns Result<string>. GETs maven-metadata.xml (with :gitea auth), then
+   takes MAX of <versions> (honoring allow-pre?). Errs when no version found."
+  [base-url group artifact & [allow-pre?]]
+  (r/try-effect*
+   :io/gitea
+   (let [url (v/maven-metadata-url base-url group artifact)
+         headers (merge {"Accept" "application/xml"} (auth-headers :gitea))
+         resp (http/get url {:headers headers :throw false})]
+     (if (= 200 (:status resp))
+       (or (v/latest-published-version (:body resp) {:allow-pre? allow-pre?})
+           (throw (ex-info "No published version in Gitea metadata"
+                           {:group group :artifact artifact})))
+       (throw (ex-info "Gitea HTTP error" {:status (:status resp)}))))))
+
 (defn resolve-mvn-latest
-  "Resolve latest stable version. Tries Clojars, falls back to Maven Central.
-   Filters pre-releases unless allow-pre? is true."
+  "Resolve latest PUBLISHED version across registries. Returns Result<string>.
+
+   Always consults Clojars (falling back to Maven Central). When MAVEN_URL is
+   set, ALSO consults the private Gitea Maven registry, returning the NEWEST
+   version across whichever sources succeed (compared via version-compare).
+   Filters pre-releases unless allow-pre? is true. Errs when no source yields
+   an acceptable published version."
   [lib-sym allow-pre?]
   (let [[group artifact] (str/split (str lib-sym) #"/")
         group (or group artifact)
         artifact (or artifact group)
-        clojars (resolve-clojars-latest group artifact)
-        latest-r (if (r/ok? clojars)
-                   clojars
-                   (resolve-maven-latest group artifact))]
-    (r/bind latest-r
-            (fn [latest]
-              (if (and (not allow-pre?) (v/pre-release? latest))
-                (r/err :parse/pre-release {:version latest :lib lib-sym})
-                (r/ok latest))))))
+        gitea-base (gitea-registry-url)
+        candidates (cond-> [(let [c (resolve-clojars-latest group artifact)]
+                              (if (r/ok? c) c (resolve-maven-latest group artifact)))]
+                     gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)))
+        versions (->> candidates
+                      (filter r/ok?)
+                      (map :ok)
+                      (remove nil?)
+                      (filter #(or allow-pre? (not (v/pre-release? %)))))]
+    (if (seq versions)
+      (r/ok (last (sort v/version-compare versions)))
+      (r/err :io/no-published-version {:lib lib-sym :allow-pre? allow-pre?}))))
 
 (defn discover-internal-libs
   "Auto-discover internal deps by scanning dep files for io.github.{org}/* coords,

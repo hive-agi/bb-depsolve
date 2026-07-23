@@ -17,6 +17,7 @@
    :bb-depsolve/version-string [:re version-string-re]
    :bb-depsolve/sha           [:re sha-re]
    :bb-depsolve/lib           :symbol
+   :bb-depsolve/registry-source [:enum :tags :registry]
 
    :bb-depsolve/git-dep
    [:map [:lib :bb-depsolve/lib] [:tag :string] [:sha :string] [:match :string]]
