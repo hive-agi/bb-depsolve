@@ -24,4 +24,6 @@
          :task (let [spec-ns (or (first *command-line-args*) "refactor.core-split")
                      spec (deref (requiring-resolve (symbol spec-ns "spec")))]
                  (doseq [[path n] (sort (split/split! spec))]
-                   (println (format "%-44s %3d forms" path n))))}}}
+                   (println (format "%-44s %3d forms" path n))))}
+  cascade-model {:doc "Model-check the release cascade (recife/TLC)."
+                  :task (shell "clojure" "-M:cascade-model")}}}
