@@ -244,3 +244,23 @@
       (is (contains? warned 'com.fasterxml.jackson.core/jackson-databind))
       ;; Dropped coords truly contained ${...} placeholders.
       (is (every? v/unresolved-property? @warnings)))))
+
+(deftest maven-metadata-test
+  (let [metadata "<metadata><versioning><latest>0.1.1</latest><versions>
+     <version>0.1.1</version><version>0.1.3-rc1</version>
+     <version>0.1.2</version><version>0.1.3</version>
+   </versions></versioning></metadata>"]
+    (testing "URL is canonical even when the configured base has trailing slashes"
+      (is (= "https://registry.example/maven/io/github/hive-agi/hive-carto/maven-metadata.xml"
+             (v/maven-metadata-url "https://registry.example/maven///"
+                                   "io.github.hive-agi" "hive-carto"))))
+    (testing "all published versions are parsed in registry order"
+      (is (= ["0.1.1" "0.1.3-rc1" "0.1.2" "0.1.3"]
+             (v/parse-maven-metadata-versions metadata))))
+    (testing "max version wins over stale metadata <latest>"
+      (is (= "0.1.3" (v/latest-published-version metadata {:allow-pre? false}))))
+    (testing "the pre-release is available when asked for"
+      (is (= "0.1.3-rc1" (v/latest-published-version metadata {:allow-pre? true}))))
+    (testing "malformed or empty metadata is total"
+      (is (= [] (v/parse-maven-metadata-versions "not xml")))
+      (is (nil? (v/latest-published-version nil {:allow-pre? false}))))))

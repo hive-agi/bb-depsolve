@@ -19,27 +19,22 @@
         #{}))
     #{}))
 
-(defn mvn-version
-  "Latest version of LIB across the maven registries, or nil."
+(defn mvn-versions
+  "Every version of LIB the maven registries list."
   [lib allow-pre?]
-  (let [result (resolve/resolve-mvn-latest lib allow-pre?)]
-    (when (r/ok? result) (:ok result))))
+  (resolve/resolve-mvn-versions lib allow-pre?))
 
 (defn known-versions
-  "Versions of LIB observable from any source."
+  "Versions of LIB observable from any source: semver git tags plus every
+   version the maven registries enumerate."
   [lib allow-pre?]
-  (let [mvn (mvn-version lib allow-pre?)]
-    (cond-> (tag-versions lib)
-      mvn (conj mvn))))
+  (into (tag-versions lib) (mvn-versions lib allow-pre?)))
 
 (defrecord LiveRegistry [opts]
   port/IArtifactRegistry
   (published? [_ lib version]
-    (let [want (v/tag->mvn-version version)
-          known (known-versions lib (:allow-pre? opts))
-          highest (last (sort v/version-compare known))]
-      (r/ok (boolean (or (contains? known want)
-                         (and highest (not (v/version-newer? highest want))))))))
+    (r/ok (contains? (known-versions lib (:allow-pre? opts))
+                     (v/tag->mvn-version version))))
 
   (latest-version [_ lib]
     (r/ok (last (sort v/version-compare (known-versions lib (:allow-pre? opts)))))))

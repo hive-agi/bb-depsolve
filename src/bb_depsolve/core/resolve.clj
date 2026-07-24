@@ -111,6 +111,64 @@
                            {:group group :artifact artifact})))
        (throw (ex-info "Gitea HTTP error" {:status (:status resp)}))))))
 
+(defn resolve-clojars-versions
+  "Every version Clojars lists for the artifact. Returns Result<#{string}>."
+  [group-id artifact-id]
+  (r/try-effect*
+   :io/clojars
+   (let [url (format "https://clojars.org/api/artifacts/%s/%s" group-id artifact-id)
+         headers (merge {"Accept" "application/json"} (auth/auth-headers :clojars))
+         resp (http/get url {:headers headers :throw false})]
+     (if (= 200 (:status resp))
+       (let [body (json/parse-string (:body resp) true)]
+         (into (if-let [latest (:latest_release body)] #{latest} #{})
+               (keep :version)
+               (:recent_versions body)))
+       (throw (ex-info "Clojars HTTP error" {:status (:status resp)}))))))
+
+(defn resolve-maven-versions
+  "Every version Maven Central lists for the artifact. Returns Result<#{string}>."
+  [group-id artifact-id]
+  (r/try-effect*
+   :io/maven-central
+   (let [url (format "https://search.maven.org/solrsearch/select?q=g:%%22%s%%22+AND+a:%%22%s%%22&core=gav&rows=200&wt=json"
+                     group-id artifact-id)
+         headers (auth/auth-headers :maven)
+         resp (http/get url (merge {:throw false}
+                                   (when (seq headers) {:headers headers})))]
+     (if (= 200 (:status resp))
+       (into #{} (keep :v) (-> (json/parse-string (:body resp) true) :response :docs))
+       (throw (ex-info "Maven HTTP error" {:status (:status resp)}))))))
+
+(defn resolve-gitea-versions
+  "Every version the private Gitea Maven registry lists. Returns Result<#{string}>."
+  [base-url group artifact]
+  (r/try-effect*
+   :io/gitea
+   (let [url (v/maven-metadata-url base-url group artifact)
+         headers (merge {"Accept" "application/xml"} (auth/auth-headers :gitea))
+         resp (http/get url {:headers headers :throw false})]
+     (if (= 200 (:status resp))
+       (set (v/parse-maven-metadata-versions (:body resp)))
+       (throw (ex-info "Gitea HTTP error" {:status (:status resp)}))))))
+
+(defn resolve-mvn-versions
+  "Union of every version LIB-SYM resolves to across the maven registries.
+   Unreachable registries contribute nothing rather than failing the union.
+   Pre-releases are dropped unless ALLOW-PRE?. Returns #{string}."
+  [lib-sym allow-pre?]
+  (let [[group artifact] (str/split (str lib-sym) #"/")
+        group (or group artifact)
+        artifact (or artifact group)
+        gitea-base (auth/gitea-registry-url)
+        results (cond-> [(resolve-clojars-versions group artifact)
+                         (resolve-maven-versions group artifact)]
+                  gitea-base (conj (resolve-gitea-versions gitea-base group artifact)))
+        versions (into #{} (comp (filter r/ok?) (mapcat :ok)) results)]
+    (if allow-pre?
+      versions
+      (into #{} (remove v/pre-release?) versions))))
+
 (defn resolve-mvn-latest
   "Resolve latest PUBLISHED version across registries. Returns Result<string>.
 
