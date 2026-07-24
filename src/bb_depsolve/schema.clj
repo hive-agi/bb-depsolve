@@ -153,7 +153,21 @@
     [:cycles [:vector [:set :bb-depsolve/project]]]
     [:excluded [:vector [:map
                          [:project :bb-depsolve/project]
-                         [:reason [:enum :cycle-member :blocked-by-cycle]]]]]]})
+                         [:reason [:enum :cycle-member :blocked-by-cycle]]]]]]
+
+   :bb-depsolve/sync-outcome
+   [:map
+    [:project :bb-depsolve/project]
+    [:paths [:set :string]]
+    [:applied [:vector :bb-depsolve/pin-update]]
+    [:skipped [:vector :bb-depsolve/pin-update]]]
+
+   :bb-depsolve/release-outcome
+   [:map
+    [:project :bb-depsolve/project]
+    [:release-mode :bb-depsolve/release-mode]
+    [:version :bb-depsolve/version-string]
+    [:tag [:maybe :bb-depsolve/semver-tag]]]})
 
 (defonce ^:private registered?
   (delay (hs/register-all! schemas)))
