@@ -94,7 +94,7 @@
     (when-let [semver (some-> current v/parse-semver)]
       (v/semver->version (f semver)))))
 
-(defn- coord-version
+(defn coord-version
   "VERSION rendered in COORD's shape: git coordinates carry a leading v,
    maven coordinates do not. Nil-safe."
   [coord version]
