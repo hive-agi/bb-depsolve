@@ -53,6 +53,8 @@
     :doc "Show what releasing one project forces downstream"}
    {:cmds ["cascade"] :fn (wrap-help release/cascade-cmd "cascade" "Plan a transitive release cascade across the workspace")
     :doc "Plan a transitive release cascade across the workspace"}
+   {:cmds ["reconcile"] :fn (wrap-help release/reconcile-cmd "reconcile" "Rewrite VERSION files that lag their released versions")
+    :doc "Rewrite VERSION files that lag their released versions"}
    {:cmds ["bump-wave"]    :fn (wrap-help wave/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
     :doc "Bump all projects with commits ahead of their tag"}
    {:cmds ["push-all"]     :fn (wrap-help wave/push-all-cmd     "push-all"     "Push all workspace projects to remotes")

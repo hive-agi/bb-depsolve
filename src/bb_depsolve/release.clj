@@ -16,7 +16,8 @@
             [bb-depsolve.exec :as exec]
             [bb-depsolve.git-port :as git-port]
             [bb-depsolve.registry :as registry]
-            [bb-depsolve.resume :as resume]))
+            [bb-depsolve.resume :as resume]
+            [bb-depsolve.reconcile :as reconcile]))
 
 (defn- skip-set
   [skip-dirs]
@@ -197,3 +198,40 @@
                                                  :await-timeout await-timeout}))
 
             :else (render/print-plan plan)))))))
+
+(defn reconcile-cmd
+  "Rewrite VERSION files that lag the versions already evidenced by their own
+   git tags or by the pins their consumers carry.
+
+   Reports only unless --apply is passed."
+  [{:keys [opts]}]
+  (let [{:keys [root org skip-dirs depth apply]
+         :or {root "."}} opts
+        skips (skip-set skip-dirs)
+        root-dir (str (fs/canonicalize root))]
+    (require-org! org "reconcile")
+    (let [g (col/collect-graph {:root root-dir :skip-dirs skips :depth depth :org org})
+          dir-of #(str (fs/path root-dir (get-in g [:nodes % :dir] %)))
+          drifts (reconcile/survey g dir-of)]
+      (if (empty? drifts)
+        (println (ui/c :green "No VERSION drift: every declared version is the highest evidenced."))
+        (do
+          (println (ui/c :bold (format "%d project(s) declare a version below what they have released:"
+                                       (count drifts))))
+          (println)
+          (doseq [{:keys [project declared highest from-tags from-pins]} drifts]
+            (printf "  %-26s %s -> %s   %s\n"
+                    (ui/c :cyan project)
+                    (ui/c :red declared)
+                    (ui/c :green highest)
+                    (ui/c :dim (str/join ", "
+                                         (cond-> []
+                                           from-tags (conj (str "tag " from-tags))
+                                           from-pins (conj (str "pinned " from-pins)))))))
+          (println)
+          (if apply
+            (doseq [{:keys [project] :as d} drifts]
+              (let [written (reconcile/apply-drift! (dir-of project) d)]
+                (println (ui/c :green (format "  %s — wrote %d VERSION file(s)"
+                                              project (count written))))))
+            (println (ui/c :dim "  Dry run. Pass --apply to rewrite these VERSION files."))))))))
