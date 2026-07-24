@@ -3,9 +3,14 @@
    Dispatches to core commands via babashka.cli."
   (:require [babashka.cli :as cli]
             [bb-depsolve.audit :as audit]
-            [bb-depsolve.core :as core]
+            [bb-depsolve.core.bump :as bump]
+            [bb-depsolve.core.lint :as lint]
+            [bb-depsolve.core.report :as report]
+            [bb-depsolve.core.sync :as sync]
+            [bb-depsolve.core.upgrade :as upgrade]
+            [bb-depsolve.release :as release]
             [bb-depsolve.wave :as wave]
-            [bb-depsolve.release :as release]))
+            [bb-depsolve.core.tree :as tree]))
 
 (defn- wrap-help
   "Wrap a command fn so --help prints subcommand usage instead of executing."
@@ -20,19 +25,19 @@
       (cmd-fn m))))
 
 (def dispatch-table
-  [{:cmds ["sync"]    :fn (wrap-help core/sync-cmd    "sync"    "Sync internal git deps to latest tags")
+  [{:cmds ["sync"]    :fn (wrap-help sync/sync-cmd    "sync"    "Sync internal git deps to latest tags")
     :doc "Sync internal git deps to latest tags"}
-   {:cmds ["upgrade"] :fn (wrap-help core/upgrade-cmd  "upgrade" "Upgrade all deps to latest versions")
+   {:cmds ["upgrade"] :fn (wrap-help upgrade/upgrade-cmd  "upgrade" "Upgrade all deps to latest versions")
     :doc "Upgrade all deps to latest versions"}
-   {:cmds ["report"]  :fn (wrap-help core/report-cmd   "report"  "Show dependency matrix")
+   {:cmds ["report"]  :fn (wrap-help report/report-cmd   "report"  "Show dependency matrix")
     :doc "Show dependency matrix"}
-   {:cmds ["lint"]    :fn (wrap-help core/lint-cmd     "lint"    "Detect dep anti-patterns (:local/root, etc.)")
+   {:cmds ["lint"]    :fn (wrap-help lint/lint-cmd     "lint"    "Detect dep anti-patterns (:local/root, etc.)")
     :doc "Detect dep anti-patterns (:local/root, etc.)"}
    {:cmds ["deep-lint"] :fn (wrap-help wave/deep-lint-cmd "deep-lint" "Lint latest tagged releases for :local/root")
     :doc "Lint latest tagged releases for :local/root anti-patterns"}
-   {:cmds ["bump"]    :fn (wrap-help core/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
+   {:cmds ["bump"]    :fn (wrap-help bump/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
-   {:cmds ["tree"]    :fn (wrap-help core/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
+   {:cmds ["tree"]    :fn (wrap-help tree/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
     :doc "Show transitive dependency tree with conflict detection"}
    {:cmds ["lock"]    :fn (wrap-help wave/lock-cmd    "lock"    "Generate deps.lock.edn per project")
     :doc "Generate deterministic deps.lock.edn per project"}

@@ -1,21 +1,17 @@
 (ns bb-depsolve.git-port-test
   "Tests for bb-depsolve.git-port against throwaway local repos."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.core :as core]
+            [bb-depsolve.core.git :as git]
             [bb-depsolve.git-port :as gp]
             [bb-depsolve.port :as p]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
-;; =============================================================================
-;; Fixtures
-;; =============================================================================
-
 (def ^:private weave 'io.github.test/weave)
 
 (defn- git!
   [dir & args]
-  (apply core/git dir args))
+  (apply git/git dir args))
 
 (defn- scratch
   "A git repo with one committed deps.edn pinning weave, plus a bare remote.
@@ -53,10 +49,6 @@
   [dir]
   (set (remove str/blank? (str/split-lines (:out (git! dir "tag" "-l"))))))
 
-;; =============================================================================
-;; Unit — pure rewriting
-;; =============================================================================
-
 (deftest apply-pin-rewrites-each-coordinate-in-its-own-shape-test
   (let [content (str "{:deps {io.github.test/weave {:mvn/version \"0.3.0\"}\n"
                      "        io.github.test/spi {:git/tag \"v0.1.0\" "
@@ -84,10 +76,6 @@
   (is (= [{:lib weave :coord :mvn :to "0.3.1"}]
          (:ok (gp/resolve-shas [{:lib weave :coord :mvn :to "0.3.1"}])))))
 
-;; =============================================================================
-;; Integration — sync-pins!
-;; =============================================================================
-
 (deftest sync-pins-rewrites-and-commits-test
   (let [{:keys [dir deps]} (scratch {})
         port (gp/git-port {:remote "origin"})
@@ -114,10 +102,6 @@
         {:keys [ok]} (p/sync-pins! port blank)]
     (is (empty? (:paths ok)))
     (is (= ["weave"] (mapv :dep (:skipped ok))))))
-
-;; =============================================================================
-;; Integration — release!
-;; =============================================================================
 
 (deftest a-pinned-release-writes-tags-and-pushes-test
   (let [{:keys [dir remote deps]} (scratch {})
@@ -156,10 +140,6 @@
                                     (assoc (step dir deps :pinned "0.1.1")
                                            :release-mode :magic))]
     (is (= :git-port/unknown-release-mode (:kind error)))))
-
-;; =============================================================================
-;; Integration — a failing git command aborts
-;; =============================================================================
 
 (deftest a-failing-push-surfaces-as-an-error-test
   (let [{:keys [dir deps]} (scratch {})

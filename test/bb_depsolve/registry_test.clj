@@ -1,7 +1,8 @@
 (ns bb-depsolve.registry-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.core :as core]
+  (:require [bb-depsolve.core.auth :as auth]
+            [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.version :as v]
+            [clojure.test :refer [deftest is testing]]
             [hive-dsl.result :as r]))
 
 (def ^:private metadata
@@ -25,17 +26,17 @@
     (is (nil? (v/latest-published-version nil {:allow-pre? false})))))
 
 (deftest resolve-mvn-latest-prefers-newest-published-registry-test
-  (with-redefs [core/gitea-registry-url (constantly "https://registry.example/maven")
-                core/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
-                core/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
-                core/resolve-gitea-latest (fn [& _] (r/ok "0.1.3"))]
+  (with-redefs [auth/gitea-registry-url (constantly "https://registry.example/maven")
+                resolve/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
+                resolve/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
+                resolve/resolve-gitea-latest (fn [& _] (r/ok "0.1.3"))]
     (is (= {:ok "0.1.3"}
-           (core/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
+           (resolve/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
 
 (deftest resolve-mvn-latest-tolerates-one-registry-failure-test
-  (with-redefs [core/gitea-registry-url (constantly "https://registry.example/maven")
-                core/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
-                core/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
-                core/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))]
+  (with-redefs [auth/gitea-registry-url (constantly "https://registry.example/maven")
+                resolve/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
+                resolve/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
+                resolve/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))]
     (is (= {:ok "0.1.2"}
-           (core/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
+           (resolve/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))

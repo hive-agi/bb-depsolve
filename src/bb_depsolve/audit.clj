@@ -7,13 +7,15 @@
    Pure vulnerability parsing / sorting lives in `bb-depsolve.version`.
    Dep-file discovery / transitive resolution lives in `bb-depsolve.core`."
   (:require [babashka.http-client :as http]
+            [bb-depsolve.core.discovery :as discovery]
+            [bb-depsolve.core.resolve :as resolve]
+            [bb-depsolve.ui :as ui]
+            [bb-depsolve.version :as v]
             [cheshire.core :as json]
             [clojure.string :as str]
             [hive-dsl.bounded-atom :as ba]
             [hive-dsl.gate :as gate]
-            [hive-dsl.result :as r]
-            [bb-depsolve.core :as core]
-            [bb-depsolve.version :as v]))
+            [hive-dsl.result :as r]))
 
 (def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
 
@@ -63,8 +65,8 @@
     (->> dep-files
          (mapcat (fn [{:keys [path] :as dep-file}]
                    (let [content (slurp path)
-                         mvn-deps (core/extract-mvn-deps dep-file content)
-                         git-deps (if (core/shadow-deps-file? dep-file)
+                         mvn-deps (discovery/extract-mvn-deps dep-file content)
+                         git-deps (if (discovery/shadow-deps-file? dep-file)
                                     []
                                     (v/find-git-deps content))
                          direct (vec (concat
@@ -77,7 +79,7 @@
                      (if tree-depth
                        ;; Resolve transitives
                        (let [resolve-fn (fn [lib version]
-                                          (core/resolve-dep-children cache lib version))
+                                          (resolve/resolve-dep-children cache lib version))
                              tree (v/build-dep-tree direct resolve-fn tree-depth)]
                          (letfn [(flatten-tree [nodes]
                                    (mapcat (fn [{:keys [lib version type children]}]
@@ -98,18 +100,18 @@
   "Scan dependencies for known CVEs via OSV.dev."
   [{:keys [opts]}]
   (let [{:keys [root skip-dirs depth tree-depth]
-         :or {root "." depth core/default-depth}} opts
+         :or {root "." depth discovery/default-depth}} opts
         skip-set (if skip-dirs
                    (into #{} (str/split skip-dirs #","))
-                   core/default-skip-dirs)
-        dep-files (core/find-dep-files {:root root :skip-dirs skip-set :depth depth})
+                   discovery/default-skip-dirs)
+        dep-files (discovery/find-dep-files {:root root :skip-dirs skip-set :depth depth})
         cache (ba/bounded-atom {:max-entries 500})]
 
-    (println (core/c :bold "Scanning dependencies for known CVEs (via OSV.dev)..."))
+    (println (ui/c :bold "Scanning dependencies for known CVEs (via OSV.dev)..."))
     (println)
 
     (let [all-deps (collect-all-mvn-deps dep-files cache tree-depth)
-          _ (println (str "  Found " (core/c :cyan (str (count all-deps)))
+          _ (println (str "  Found " (ui/c :cyan (str (count all-deps)))
                           " unique Maven dependencies"
                           (when tree-depth " (including transitives)")))
           _ (println (str "  Querying OSV.dev..."))
@@ -118,16 +120,16 @@
           total-vulns (reduce + 0 (map (comp count :vulns) (vals vulnerable)))]
 
       (if (empty? vulnerable)
-        (println (core/c :green "No known vulnerabilities found."))
+        (println (ui/c :green "No known vulnerabilities found."))
         (do
-          (println (core/c :bold (core/c :red (str total-vulns " vulnerabilit"
+          (println (ui/c :bold (ui/c :red (str total-vulns " vulnerabilit"
                                                    (if (= 1 total-vulns) "y" "ies")
                                                    " found in " (count vulnerable)
                                                    " package" (when (> (count vulnerable) 1) "s")
                                                    ":"))))
           (println)
           (doseq [[lib {:keys [version vulns]}] (sort-by key vulnerable)]
-            (println (str "  " (core/c :bold (str lib)) " " (core/c :dim version)))
+            (println (str "  " (ui/c :bold (str lib)) " " (ui/c :dim version)))
             (doseq [{:keys [id severity summary fixed-in]} vulns]
               (let [sev-color (case severity
                                 "CRITICAL" :red
@@ -137,13 +139,13 @@
                                 :dim)
                     fix-str (when (seq fixed-in)
                               (str " → fix: " (str/join ", " fixed-in)))]
-                (println (str "    " (core/c sev-color (or severity "?"))
-                              " " (core/c :bold id)
+                (println (str "    " (ui/c sev-color (or severity "?"))
+                              " " (ui/c :bold id)
                               "  " (or summary "")
-                              (when fix-str (core/c :green fix-str))))))
+                              (when fix-str (ui/c :green fix-str))))))
             (println))
 
-          (println (core/c :dim "Source: https://osv.dev"))
+          (println (ui/c :dim "Source: https://osv.dev"))
           (println)
 
           ;; Exit with non-zero for CI integration

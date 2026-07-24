@@ -1,6 +1,6 @@
 (ns bb-depsolve.registry
   "IArtifactRegistry over git tags and published maven versions."
-  (:require [bb-depsolve.core :as core]
+  (:require [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.port :as port]
             [bb-depsolve.version :as v]
             [hive-dsl.result :as r]))
@@ -9,7 +9,7 @@
   "Semver tags published for LIB, in maven form. Empty when unreachable."
   [lib]
   (if-let [{:keys [org repo]} (v/parse-github-lib lib)]
-    (let [result (core/resolve-remote-tags org repo)]
+    (let [result (resolve/resolve-remote-tags org repo)]
       (if (r/ok? result)
         (into #{}
               (comp (map :tag)
@@ -22,7 +22,7 @@
 (defn mvn-version
   "Latest version of LIB across the maven registries, or nil."
   [lib allow-pre?]
-  (let [result (core/resolve-mvn-latest lib allow-pre?)]
+  (let [result (resolve/resolve-mvn-latest lib allow-pre?)]
     (when (r/ok? result) (:ok result))))
 
 (defn known-versions

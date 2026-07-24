@@ -2,7 +2,8 @@
   "IReleasePort over the working tree."
   (:require [babashka.fs :as fs]
             [bb-depsolve.collect :as collect]
-            [bb-depsolve.core :as core]
+            [bb-depsolve.core.git :as git]
+            [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.port :as port]
             [bb-depsolve.version :as v]
             [clojure.string :as str]
@@ -14,7 +15,7 @@
   "Short sha the remote serves for TAG of LIB, or nil."
   [lib tag]
   (when-let [{:keys [org repo]} (v/parse-github-lib lib)]
-    (let [result (core/resolve-remote-tags org repo)]
+    (let [result (resolve/resolve-remote-tags org repo)]
       (when (r/ok? result)
         (some #(when (= tag (:tag %)) (or (:sha-short %) (:sha %)))
               (:ok result))))))
@@ -44,7 +45,7 @@
   [write? dir args]
   (if-not write?
     (r/ok {:exit 0 :rehearsed args})
-    (let [{:keys [exit err] :as result} (apply core/git dir args)]
+    (let [{:keys [exit err] :as result} (apply git/git dir args)]
       (if (zero? (long exit))
         (r/ok result)
         (r/err {:kind :git-port/git-failed

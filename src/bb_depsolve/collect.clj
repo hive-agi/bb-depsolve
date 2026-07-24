@@ -5,7 +5,8 @@
    out to git. Produces the plain data bb-depsolve.graph consumes; performs no
    analysis of its own."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.core :as core]
+            [bb-depsolve.core.discovery :as discovery]
+            [bb-depsolve.core.git :as git]
             [bb-depsolve.graph :as graph]
             [bb-depsolve.schema :as sch]
             [bb-depsolve.version :as v]
@@ -18,7 +19,7 @@
   [root-dir skip-dirs]
   (->> (fs/list-dir root-dir)
        (filter fs/directory?)
-       (remove #(core/skip-path? root-dir skip-dirs %))
+       (remove #(discovery/skip-path? root-dir skip-dirs %))
        (filter #(fs/exists? (fs/path % "version.edn")))
        (filter #(fs/exists? (fs/path % ".git")))
        (sort)
@@ -43,7 +44,7 @@
   "Commit count from `git rev-list <rev> --count` in PROJECT-DIR.
    Returns nil when git fails."
   [project-dir rev]
-  (let [{:keys [exit out]} (core/git project-dir "rev-list" rev "--count")]
+  (let [{:keys [exit out]} (git/git project-dir "rev-list" rev "--count")]
     (when (zero? exit)
       (parse-long (str/trim (or out ""))))))
 
@@ -64,7 +65,7 @@
    pushed to the tracking branch. Returns 0 when it cannot be determined."
   [project-dir mode version]
   (or (if (= :pinned mode)
-        (when version (core/git-commits-ahead project-dir (str "v" version)))
+        (when version (git/git-commits-ahead project-dir (str "v" version)))
         (git-count project-dir "@{u}..HEAD"))
       0))
 
@@ -94,7 +95,7 @@
   [dep-files nodes]
   (let [by-lib (into {} (map (juxt (comp str :lib) :project)) nodes)]
     (->> dep-files
-         (remove core/shadow-deps-file?)
+         (remove discovery/shadow-deps-file?)
          (mapcat (fn [{:keys [path project]}]
                    (let [content (slurp path)
                          runtime (into #{} (map str) (v/runtime-libs content))
@@ -118,7 +119,7 @@
   [dep-files nodes]
   (let [by-lib (into {} (map (juxt (comp str :lib) :project)) nodes)]
     (->> dep-files
-         (remove core/shadow-deps-file?)
+         (remove discovery/shadow-deps-file?)
          (mapcat (fn [{:keys [path project]}]
                    (for [{:keys [lib sha]} (v/find-git-sha-only-deps (slurp path))
                          :let [dep (get by-lib (str lib))]
@@ -138,13 +139,13 @@
    (default #{:runtime}). Nil options fall back to defaults.
    Validated at this boundary."
   [{:keys [root skip-dirs depth org edge-scopes]}]
-  (let [skip-set (or skip-dirs core/default-skip-dirs)
+  (let [skip-set (or skip-dirs discovery/default-skip-dirs)
         scopes (or edge-scopes default-edge-scopes)
         root-dir (str (fs/canonicalize (or root ".")))
         nodes (collect-nodes root-dir skip-set org)
-        dep-files (core/find-dep-files {:root root-dir
+        dep-files (discovery/find-dep-files {:root root-dir
                                         :skip-dirs skip-set
-                                        :depth (or depth core/default-depth)})
+                                        :depth (or depth discovery/default-depth)})
         pins (collect-pins dep-files nodes)]
     (sch/validate! :bb-depsolve/internal-graph
                    (graph/dep-graph nodes pins

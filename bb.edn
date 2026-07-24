@@ -17,4 +17,11 @@
                      io.github.cognitect-labs/test-runner
                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
         :task (exec 'cognitect.test-runner.api/test)}
-  test-model {:task (shell "clojure" "-M:test-model")}}}
+  test-model {:task (shell "clojure" "-M:test-model")}
+  split {:doc "Apply a namespace split spec from dev/refactor (REPL-driven refactoring)."
+         :extra-paths ["dev"]
+         :requires ([refactor.split :as split])
+         :task (let [spec-ns (or (first *command-line-args*) "refactor.core-split")
+                     spec (deref (requiring-resolve (symbol spec-ns "spec")))]
+                 (doseq [[path n] (sort (split/split! spec))]
+                   (println (format "%-44s %3d forms" path n))))}}}
