@@ -26,7 +26,7 @@
   :test-model {:extra-paths ["test-model"]
  :extra-deps {org.clojure/clojure {:mvn/version "1.12.1"}
               pfeodrippe/recife {:mvn/version "0.22.0"}
-              io.github.hive-agi/hive-recife {:git/sha "2734b324642afac34fed6803495819343481121f"}
+              io.github.hive-agi/hive-recife {:git/tag "v0.1.4" :git/sha "a77a70f"}
               io.github.hive-agi/hive-spi {:git/tag "v0.1.9" :git/sha "3c468c4"}}
  :main-opts ["-m" "bb-depsolve.sync-model"]}
   :dev {:extra-paths ["dev" "test"]
