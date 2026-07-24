@@ -14,7 +14,8 @@
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.zip :as z]))
+            [rewrite-clj.zip :as z]
+            [clojure.java.io :as io]))
 
 ;; =============================================================================
 ;; Parsing
@@ -168,25 +169,42 @@
         (top-level-forms source-file)))
 
 (defn split!
-  "Slice SPEC's :source-file into one file per module. Unless :facade? is false
-   the original is rewritten as a re-exporting facade; otherwise it is deleted,
-   which is what a test namespace wants — re-exporting tests is meaningless.
+  "Slice SPEC's :source-file into one file per module.
+
+   What becomes of the original depends on the spec:
+     :keep-module m  - m's forms are written back to :source-file. m must be a
+                       STRING naming the original namespace, so it is treated
+                       as an absolute module and keeps its own name.
+     :facade? true   - (default) the original becomes a re-exporting facade.
+     :facade? false  - the original is deleted, which is what a test namespace
+                       wants: re-exporting tests is meaningless.
+
    Returns a path -> form-count map."
-  [{:keys [source-file source-dir facade?] :or {facade? true} :as spec}]
+  [{:keys [source-file source-dir facade? keep-module] :or {facade? true} :as spec}]
   (let [classified (classify spec)
         grouped (group-by :owner classified)
-        modules (keys grouped)]
+        modules (keys grouped)
+        siblings (fn [m] (remove #{m} modules))]
     (into {}
           (concat
-           (for [[module forms] grouped]
+           (for [[module forms] (dissoc grouped keep-module)]
              (let [path (module-file source-dir module)]
-               (spit path (module-source spec module forms (remove #{module} modules)))
+               (spit path (module-source spec module forms (siblings module)))
                [path (count forms)]))
-           (if facade?
+           (cond
+             keep-module
+             [(let [forms (get grouped keep-module)]
+                (spit source-file
+                      (module-source spec keep-module forms (siblings keep-module)))
+                [source-file (count forms)])]
+
+             facade?
              [(let [exports (->> classified (remove :private?) (map (juxt :name :owner)))]
                 (spit source-file (facade-source spec exports))
                 [source-file (count exports)])]
-             (do (clojure.java.io/delete-file source-file true)
+
+             :else
+             (do (io/delete-file source-file true)
                  [[(str source-file " (deleted)") 0]]))))))
 
 (defn repoint!
@@ -196,7 +214,7 @@
 
    Symbol rewriting only; requires are then reconciled with carto.
    Returns file -> {:renamed n :needs #{module}}."
-  [{:keys [owner external] :as spec} files]
+  [{:keys [owner external]} files]
   (into {}
         (for [path files]
           (let [src (slurp path)

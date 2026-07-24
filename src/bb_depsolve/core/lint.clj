@@ -80,69 +80,65 @@
               (println (ui/c :bold "Fixing: splitting :local/root deps..."))
               (println)
 
-              (let [unique-locals (->> @all-locals
-                                       (map #(select-keys % [:lib :path]))
-                                       (distinct))]
+              (doseq [[file-path {:keys [locals content]}] @by-file
+                      :let [project-dir (str (fs/parent file-path))]]
 
-                (doseq [[file-path {:keys [project locals content]}] @by-file
-                        :let [project-dir (str (fs/parent file-path))]]
+                (let [local-deps-path (str (fs/path project-dir "local.deps.edn"))]
+                  (if (fs/exists? local-deps-path)
+                    (println (ui/c :yellow (str "  Skipped " (str (fs/relativize root-dir local-deps-path))
+                                                " (already exists — merge manually)")))
+                    (do
+                      (spit local-deps-path (generate-local-deps-edn locals org))
+                      (println (ui/c :green (str "  Created " (str (fs/relativize root-dir local-deps-path))))))))
 
-                  (let [local-deps-path (str (fs/path project-dir "local.deps.edn"))]
-                    (if (fs/exists? local-deps-path)
-                      (println (ui/c :yellow (str "  Skipped " (str (fs/relativize root-dir local-deps-path))
-                                               " (already exists — merge manually)")))
-                      (do
-                        (spit local-deps-path (generate-local-deps-edn locals org))
-                        (println (ui/c :green (str "  Created " (str (fs/relativize root-dir local-deps-path))))))))
+                (ensure-gitignore-entry! project-dir "local.deps.edn")
 
-                  (ensure-gitignore-entry! project-dir "local.deps.edn")
+                (let [updated-content (atom content)
+                      replaced (atom 0)]
+                  (doseq [{:keys [lib path]} locals
+                          :let [github? (v/parse-github-lib lib)]]
+                    (if github?
+                      (let [dir-name (v/lib-artifact-id lib)
+                            tag-result (resolve/resolve-lib-tags root-dir lib dir-name)]
+                        (if (r/ok? tag-result)
+                          (let [{:keys [tag sha sha-short]} (:ok tag-result)
+                                use-sha (or sha-short sha)]
+                            (swap! updated-content v/replace-local-with-git lib tag use-sha)
+                            (swap! replaced inc)
+                            (println (str "  " (ui/c :cyan (str lib))
+                                          " -> " (ui/c :green tag) " " (ui/c :dim use-sha))))
+                          (println (ui/c :yellow (str "  Could not resolve " lib
+                                                      " — remove :local/root manually")))))
+                      ;; Not io.github.* — try local sibling dir first, then mvn
+                      (let [sibling-dir (v/infer-sibling-dir path)
+                            local-dir (when sibling-dir (fs/path root-dir sibling-dir))
+                            local-tag (when (and local-dir (fs/directory? (fs/path local-dir ".git")))
+                                        (resolve/resolve-local-tags (str local-dir)))]
+                        (if-let [latest (and (r/ok? local-tag) (v/latest-tag (:ok local-tag)))]
+                          (let [{:keys [tag sha]} latest
+                                use-sha (if (<= (count sha) 12) sha (subs sha 0 7))
+                                canonical (v/canonical-lib lib path org)]
+                            (swap! updated-content v/replace-local-with-git lib tag use-sha canonical)
+                            (swap! replaced inc)
+                            (println (str "  " (ui/c :cyan (str lib))
+                                          (when (not= canonical lib) (str " -> " (ui/c :cyan (str canonical))))
+                                          " -> " (ui/c :green tag) " " (ui/c :dim use-sha)
+                                          " (local sibling: " sibling-dir ")")))
+                          (let [mvn-result (resolve/resolve-mvn-latest lib false)]
+                            (if (r/ok? mvn-result)
+                              (let [version (:ok mvn-result)]
+                                (swap! updated-content v/replace-local-with-mvn lib version)
+                                (swap! replaced inc)
+                                (println (str "  " (ui/c :cyan (str lib))
+                                              " -> " (ui/c :green version))))
+                              (println (ui/c :yellow (str "  Could not resolve " lib
+                                                          " — remove :local/root manually")))))))))
 
-                  (let [updated-content (atom content)
-                        replaced (atom 0)]
-                    (doseq [{:keys [lib path]} locals
-                            :let [github? (v/parse-github-lib lib)]]
-                      (if github?
-                        (let [dir-name (v/lib-artifact-id lib)
-                              tag-result (resolve/resolve-lib-tags root-dir lib dir-name)]
-                          (if (r/ok? tag-result)
-                            (let [{:keys [tag sha sha-short]} (:ok tag-result)
-                                  use-sha (or sha-short sha)]
-                              (swap! updated-content v/replace-local-with-git lib tag use-sha)
-                              (swap! replaced inc)
-                              (println (str "  " (ui/c :cyan (str lib))
-                                            " -> " (ui/c :green tag) " " (ui/c :dim use-sha))))
-                            (println (ui/c :yellow (str "  Could not resolve " lib
-                                                     " — remove :local/root manually")))))
-                        ;; Not io.github.* — try local sibling dir first, then mvn
-                        (let [sibling-dir (v/infer-sibling-dir path)
-                              local-dir (when sibling-dir (fs/path root-dir sibling-dir))
-                              local-tag (when (and local-dir (fs/directory? (fs/path local-dir ".git")))
-                                          (resolve/resolve-local-tags (str local-dir)))]
-                          (if-let [latest (and (r/ok? local-tag) (v/latest-tag (:ok local-tag)))]
-                            (let [{:keys [tag sha]} latest
-                                  use-sha (if (<= (count sha) 12) sha (subs sha 0 7))
-                                  canonical (v/canonical-lib lib path org)]
-                              (swap! updated-content v/replace-local-with-git lib tag use-sha canonical)
-                              (swap! replaced inc)
-                              (println (str "  " (ui/c :cyan (str lib))
-                                            (when (not= canonical lib) (str " -> " (ui/c :cyan (str canonical))))
-                                            " -> " (ui/c :green tag) " " (ui/c :dim use-sha)
-                                            " (local sibling: " sibling-dir ")")))
-                            (let [mvn-result (resolve/resolve-mvn-latest lib false)]
-                              (if (r/ok? mvn-result)
-                                (let [version (:ok mvn-result)]
-                                  (swap! updated-content v/replace-local-with-mvn lib version)
-                                  (swap! replaced inc)
-                                  (println (str "  " (ui/c :cyan (str lib))
-                                                " -> " (ui/c :green version))))
-                                (println (ui/c :yellow (str "  Could not resolve " lib
-                                                         " — remove :local/root manually")))))))))
+                  (when (pos? @replaced)
+                    (spit file-path @updated-content)
+                    (println (ui/c :green (str "  Updated " (str (fs/relativize root-dir file-path))))))))
 
-                    (when (pos? @replaced)
-                      (spit file-path @updated-content)
-                      (println (ui/c :green (str "  Updated " (str (fs/relativize root-dir file-path))))))))
-
-                (println)
-                (println (ui/c :green "Done. Review the changes and commit."))))
+              (println)
+              (println (ui/c :green "Done. Review the changes and commit.")))
 
             (println (ui/c :dim "  Pass --fix to auto-split into local.deps.edn and resolve remote coords."))))))))

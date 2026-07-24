@@ -7,9 +7,9 @@
 
    Uses hive-test.mutation macros: Phase 1 runs with real impl (must pass),
    Phase 2 rebinds var to mutant (must fail)."
-  (:require [clojure.test :refer [deftest is testing]]
-            [hive-test.mutation :as mut]
-            [bb-depsolve.version :as v]))
+  (:require [bb-depsolve.version :as v]
+            [clojure.test :refer [is]]
+            [hive-test.mutation :as mut]))
 
 ;; =============================================================================
 ;; M1: version-newer? — the core comparison function

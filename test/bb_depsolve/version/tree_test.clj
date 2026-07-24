@@ -33,12 +33,12 @@
                          "b/b" [{:lib 'a/a :version "1.0" :type :mvn}]
                          []))
           deps [{:lib 'a/a :version "1.0" :type :mvn}]
-          tree (v/build-dep-tree deps resolve-fn 5)]
-      (let [b-node (first (:children (first tree)))
-            a-cycle (first (:children b-node))]
-        (is (= 'a/a (:lib a-cycle)))
-        (is (true? (:cycle? a-cycle)))
-        (is (= [] (:children a-cycle)))))))
+          tree (v/build-dep-tree deps resolve-fn 5)
+          b-node (first (:children (first tree)))
+          a-cycle (first (:children b-node))]
+      (is (= 'a/a (:lib a-cycle)))
+      (is (true? (:cycle? a-cycle)))
+      (is (= [] (:children a-cycle))))))
 
 (deftest find-conflicts-test
   (testing "finds version conflicts"
