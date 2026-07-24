@@ -11,7 +11,8 @@
             [bb-depsolve.schema :as sch]
             [bb-depsolve.version :as v]
             [clojure.string :as str]
-            [clojure.test.check.generators :as gen]))
+            [clojure.test.check.generators :as gen]
+            [bb-depsolve.schema.exec :as sx]))
 
 ;; =============================================================================
 ;; Registry + sample validation
@@ -20,6 +21,26 @@
 (deftest registry-populated-test
   (is (= (set (keys sch/schemas))
          (set (sch/register!)))))
+
+(deftest exec-registry-populated-test
+  (is (= (set (keys sx/schemas))
+         (set (sx/register!)))))
+
+(deftest a-malformed-run-is-rejected-test
+  (let [run {:status :complete
+             :waves [{:index 0
+                      :steps [{:project "weave" :status :released
+                               :version "0.3.1" :tag "v0.3.1"
+                               :pin-updates []}]
+                      :await nil}]
+             :released {"weave" "0.3.1"}}]
+    (is (sch/validate! :bb-depsolve/exec-run run))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (sch/validate! :bb-depsolve/exec-run
+                                (assoc-in run [:waves 0 :steps 0 :status] :vanished))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (sch/validate! :bb-depsolve/exec-run
+                                (assoc run :released {"weave" "v0.3.1"}))))))
 
 (deftest sample-validation-test
   (testing "semver-triple"

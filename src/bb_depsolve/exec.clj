@@ -9,7 +9,9 @@
             [bb-depsolve.port :as port]
             [bb-depsolve.ui :as ui]
             [clojure.string :as str]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.schema :as sch]
+            [bb-depsolve.schema.exec :as schema-exec]))
 
 (defn preflight
   "=> Result of PLAN, or an :exec/unsafe-plan error when it carries cycles or
@@ -67,6 +69,14 @@
   [outcome]
   (= :released (:status outcome)))
 
+(schema-exec/register!)
+
+(defn- run-value
+  "Validated run record. Throws on a malformed run."
+  [status waves released]
+  (sch/validate! :bb-depsolve/exec-run
+                 {:status status :waves waves :released released}))
+
 (defn- default-emit
   [{:keys [type project outcome]}]
   (case type
@@ -116,7 +126,7 @@
               released {}
               acc []]
          (if (nil? wave)
-           (r/ok {:status :complete :waves acc :released released})
+           (r/ok (run-value :complete acc released))
            (let [_ (emit {:type :wave/start :outcome wave})
                  outcomes (mapv (fn [step]
                                   (emit {:type :step/start :project (:project step)})
@@ -131,9 +141,9 @@
              (if (seq failed)
                (r/err {:kind :exec/step-failed
                        :failed (mapv :project failed)
-                       :run {:status :aborted
-                             :waves (conj acc {:index (:index wave) :steps outcomes})
-                             :released released'}})
+                       :run (run-value :aborted
+                                       (conj acc {:index (:index wave) :steps outcomes})
+                                       released')})
                (let [awaited (await/await-wave! registry
                                                 (await-directive wave outcomes)
                                                 (get opts :await-opts {}))
@@ -144,6 +154,4 @@
                    (recur more released' (conj acc record))
                    (r/err {:kind :exec/await-failed
                            :await (:error awaited)
-                           :run {:status :aborted
-                                 :waves (conj acc record)
-                                 :released released'}})))))))))))
+                           :run (run-value :aborted (conj acc record) released')})))))))))))

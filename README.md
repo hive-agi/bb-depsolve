@@ -138,6 +138,48 @@ so and advances from the higher one rather than planning a downgrade.
 This command plans only — it never writes. `--apply` is refused rather than silently
 ignored.
 
+#### Waiting between waves
+
+A wave's consumers cannot re-pin a dependency until that dependency's artifact is
+actually resolvable, so every wave carries an await directive. The plan records it;
+the executor performs it.
+
+Waiting is visible. Each poll reports every lib in the wave and what it is waiting
+for — an exact version for a pinned release, "anything newer" for a rolling one:
+
+```
+waiting on 2 of 3 artifact(s) — 34s elapsed
+  ✔ io.github.hive-agi/hive-weave    published
+  … io.github.hive-agi/hive-dsl      waiting = 0.5.9
+  … io.github.hive-agi/hive-system   waiting > 0.2.11
+```
+
+On a terminal the block is redrawn in place; through a pipe each state change prints
+one line. Polling backs off from 2s to a 15s ceiling, bounded by `--await-timeout`.
+
+`--no-wait` sets the plan's await mode to skip. A timeout is a loud failure naming
+every lib that never published — never a silent continue:
+
+```
+await timed out after 900s (limit 900s)
+  never published: io.github.hive-agi/hive-dsl
+  re-run with --no-wait to plan past it.
+```
+
+Versions are resolved across GitHub tags, Clojars, Maven Central and — when
+`MAVEN_URL` is set — the private Gitea Maven registry.
+
+#### What an interrupted cascade reports
+
+A release cascade is not atomic: by the time a later wave fails, earlier waves are
+already tagged and pushed. Execution therefore never discards what it finished. A
+failed run reports every wave that completed, the outcome of every step
+(`released` / `sync-failed` / `release-failed`), and the versions already published,
+so the remaining work is visible rather than reconstructed by hand.
+
+Execution refuses to start on a plan carrying dependency cycles or unknown seeds
+unless forced.
+
 ## Options
 
 | Flag | Default | Description |
