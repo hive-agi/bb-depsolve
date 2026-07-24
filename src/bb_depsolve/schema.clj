@@ -18,6 +18,13 @@
    :bb-depsolve/sha           [:re sha-re]
    :bb-depsolve/lib           :symbol
    :bb-depsolve/registry-source [:enum :tags :registry]
+   :bb-depsolve/project       :string
+   :bb-depsolve/coord         [:enum :git :mvn]
+   :bb-depsolve/pin-scope     [:enum :runtime :alias]
+   :bb-depsolve/release-mode  [:enum :pinned :rolling]
+   :bb-depsolve/bump-kind     [:enum :patch :minor :major]
+   :bb-depsolve/role          [:enum :seed :consumer]
+   :bb-depsolve/await-mode    [:enum :wait :skip]
 
    :bb-depsolve/git-dep
    [:map [:lib :bb-depsolve/lib] [:tag :string] [:sha :string] [:match :string]]
@@ -65,7 +72,88 @@
     [:conflicts [:map-of :bb-depsolve/lib [:set :string]]]
     [:occurrences [:map-of :bb-depsolve/lib
                    [:vector [:map [:version :string] [:type :keyword] [:depth :int]]]]]
-    [:missing [:set :bb-depsolve/lib]]]})
+    [:missing [:set :bb-depsolve/lib]]]
+
+   :bb-depsolve/graph-node
+   [:map
+    [:project :bb-depsolve/project]
+    [:lib :bb-depsolve/lib]
+    [:dir :string]
+    [:release-mode :bb-depsolve/release-mode]
+    [:version [:maybe :string]]]
+
+   :bb-depsolve/graph-pin
+   [:map
+    [:project :bb-depsolve/project]
+    [:dep :bb-depsolve/project]
+    [:lib :bb-depsolve/lib]
+    [:coord :bb-depsolve/coord]
+    [:scope :bb-depsolve/pin-scope]
+    [:version :string]
+    [:path :string]]
+
+   :bb-depsolve/internal-graph
+   [:map
+    [:nodes [:map-of :bb-depsolve/project :bb-depsolve/graph-node]]
+    [:edges [:map-of :bb-depsolve/project [:set :bb-depsolve/project]]]
+    [:pins [:map-of [:tuple :bb-depsolve/project :bb-depsolve/project]
+            [:vector :bb-depsolve/graph-pin]]]]
+
+   :bb-depsolve/pin-update
+   [:map
+    [:dep :bb-depsolve/project]
+    [:lib :bb-depsolve/lib]
+    [:coord :bb-depsolve/coord]
+    [:path :string]
+    [:from :string]
+    [:to [:maybe :string]]]
+
+   :bb-depsolve/cascade-step
+   [:map
+    [:project :bb-depsolve/project]
+    [:lib :bb-depsolve/lib]
+    [:dir :string]
+    [:role :bb-depsolve/role]
+    [:release-mode :bb-depsolve/release-mode]
+    [:current-version [:maybe :string]]
+    [:bump-kind [:maybe :bb-depsolve/bump-kind]]
+    [:next-version [:maybe :string]]
+    [:version-drift {:optional true}
+     [:map [:declared [:maybe :string]] [:observed :string]]]
+    [:pin-updates [:vector :bb-depsolve/pin-update]]]
+
+   :bb-depsolve/await-policy
+   [:map
+    [:mode :bb-depsolve/await-mode]
+    [:timeout-ms :int]]
+
+   :bb-depsolve/await
+   [:map
+    [:mode :bb-depsolve/await-mode]
+    [:timeout-ms :int]
+    [:libs [:vector [:map
+                     [:lib :bb-depsolve/lib]
+                     [:newer-than [:maybe :string]]
+                     [:expect [:maybe :string]]]]]]
+
+   :bb-depsolve/cascade-wave
+   [:map
+    [:index :int]
+    [:steps [:vector :bb-depsolve/cascade-step]]
+    [:await :bb-depsolve/await]]
+
+   :bb-depsolve/cascade-plan
+   [:map
+    [:seeds [:set :bb-depsolve/project]]
+    [:unknown-seeds [:set :bb-depsolve/project]]
+    [:policy [:map
+              [:requested-bump :bb-depsolve/bump-kind]
+              [:await :bb-depsolve/await-policy]]]
+    [:waves [:vector :bb-depsolve/cascade-wave]]
+    [:cycles [:vector [:set :bb-depsolve/project]]]
+    [:excluded [:vector [:map
+                         [:project :bb-depsolve/project]
+                         [:reason [:enum :cycle-member :blocked-by-cycle]]]]]]})
 
 (defonce ^:private registered?
   (delay (hs/register-all! schemas)))

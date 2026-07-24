@@ -81,6 +81,39 @@
          (mapv (fn [[match lib tag sha]]
                  {:lib (symbol lib) :tag tag :sha sha :match match})))))
 
+(defn find-git-sha-only-deps
+  "Find git deps pinned by :git/sha with no :git/tag in file content string.
+   These carry no comparable version and are invisible to tag-based sync.
+   Returns vec of {:lib :sha :match}. Pure: no I/O."
+  [content]
+  (let [tagged (into #{} (map (comp str :lib)) (find-git-deps content))
+        pattern #"([\w.\-]+/[\w.\-]+)\s+\{[^}]*:git/sha\s+\"([^\"]+)\""]
+    (->> (re-seq pattern content)
+         (remove (fn [[_ lib _]] (contains? tagged lib)))
+         (mapv (fn [[match lib sha]]
+                 {:lib (symbol lib) :sha sha :match match})))))
+
+(defn dep-coords-by-scope
+  "Dependency coordinates in deps.edn/bb.edn CONTENT, grouped by scope.
+   :runtime holds top-level :deps; :alias holds :deps, :extra-deps and
+   :replace-deps of every :aliases and :tasks entry.
+   Unparseable content yields empty maps. Pure: no I/O."
+  [content]
+  (let [m (try (edn/read-string content) (catch Exception _ nil))
+        scoped (concat (for [[_ a] (:aliases m) :when (map? a)
+                             k [:deps :extra-deps :replace-deps]]
+                         (get a k))
+                       (for [[_ t] (:tasks m) :when (map? t)
+                             k [:deps :extra-deps]]
+                         (get t k)))]
+    {:runtime (or (:deps m) {})
+     :alias (reduce merge {} (filter map? scoped))}))
+
+(defn runtime-libs
+  "Set of lib symbols declared under top-level :deps in CONTENT. Pure."
+  [content]
+  (set (keys (:runtime (dep-coords-by-scope content)))))
+
 (defn find-mvn-deps
   "Find all mvn deps in file content string.
    Returns vec of {:lib :version :match}. Pure: no I/O."

@@ -4,7 +4,8 @@
   (:require [babashka.cli :as cli]
             [bb-depsolve.audit :as audit]
             [bb-depsolve.core :as core]
-            [bb-depsolve.wave :as wave]))
+            [bb-depsolve.wave :as wave]
+            [bb-depsolve.release :as release]))
 
 (defn- wrap-help
   "Wrap a command fn so --help prints subcommand usage instead of executing."
@@ -37,6 +38,12 @@
     :doc "Generate deterministic deps.lock.edn per project"}
    {:cmds ["audit"]   :fn (wrap-help audit/audit-cmd  "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
     :doc "Scan dependencies for known CVEs (via OSV.dev)"}
+   {:cmds ["graph"]   :fn (wrap-help release/graph-cmd "graph"  "Show the internal dependency DAG in release order")
+    :doc "Show the internal dependency DAG in release order"}
+   {:cmds ["impact"]  :fn (wrap-help release/impact-cmd "impact" "Show what releasing one project forces downstream")
+    :doc "Show what releasing one project forces downstream"}
+   {:cmds ["cascade"] :fn (wrap-help release/cascade-cmd "cascade" "Plan a transitive release cascade across the workspace")
+    :doc "Plan a transitive release cascade across the workspace"}
    {:cmds ["bump-wave"]    :fn (wrap-help wave/bump-wave-cmd    "bump-wave"    "Bump all projects with commits ahead of their tag")
     :doc "Bump all projects with commits ahead of their tag"}
    {:cmds ["push-all"]     :fn (wrap-help wave/push-all-cmd     "push-all"     "Push all workspace projects to remotes")
@@ -64,8 +71,12 @@
                           :sync :boolean
                           :force :boolean
                           :skip-remote :boolean
+                          :no-wait :boolean
                           :depth :long
                           :tree-depth :long
+                          :await-timeout :long
                           :from :string
                           :to :string
+                          :lib :string
+                          :format :string
                           :extra :string}}))

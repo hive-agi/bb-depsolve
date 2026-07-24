@@ -87,6 +87,57 @@ Shows which libraries are shared across projects and highlights version drift.
 bb-depsolve report --root .
 ```
 
+### `graph` — Internal dependency DAG in release order
+
+Builds the graph of which workspace projects depend on which, and partitions it into
+release levels: every project at level *n* has all of its dependencies at levels below *n*.
+Reports dependency cycles, projects blocked behind them, and internal coordinates pinned by
+a bare `:git/sha` (which carry no comparable version).
+
+Only top-level `:deps` constrain ordering — a coordinate that appears solely under an alias
+or a `bb.edn` task is still tracked for rewriting, but does not force a release order.
+
+```bash
+bb-depsolve graph --root . --org hive-agi
+bb-depsolve graph --root . --org hive-agi --format dot | dot -Tsvg -o deps.svg
+bb-depsolve graph --root . --org hive-agi --format edn
+```
+
+### `impact` — Blast radius of one release
+
+Answers "if I release X, what else has to go out?" — direct consumers, the full transitive
+closure, and the wave order they must be released in.
+
+```bash
+bb-depsolve impact --lib hive-weave --root . --org hive-agi
+```
+
+### `cascade` — Plan a transitive release
+
+The whole point: releasing `hive-weave` means its consumers must re-pin it and be released
+too, then *their* consumers, and so on. `cascade` computes that as an ordered plan.
+
+Seeds come from `--from`; without it, every project holding unpublished commits seeds the
+cascade. Each wave lists the version each project moves to, the pins it must rewrite, and
+the artifacts to wait for before the next wave starts.
+
+```bash
+bb-depsolve cascade --from hive-weave --root . --org hive-agi
+bb-depsolve cascade --root . --org hive-agi              # auto-detect seeds
+bb-depsolve cascade --from hive-weave --org hive-agi --no-wait
+bb-depsolve cascade --from hive-weave --org hive-agi --format edn
+```
+
+Both release models are handled: **pinned** projects (a tracked `VERSION` file) get an
+explicit bump, while **rolling** projects (version derived as `0.{minor}.{commit-count}`)
+are released by the push itself, so no bump is planned for them.
+
+When a project's `VERSION` file is behind versions its consumers already pin, the plan says
+so and advances from the higher one rather than planning a downgrade.
+
+This command plans only — it never writes. `--apply` is refused rather than silently
+ignored.
+
 ## Options
 
 | Flag | Default | Description |
@@ -102,6 +153,11 @@ bb-depsolve report --root .
 | `--minor` | `false` | Bump patch version (explicit, same as default) |
 | `--stable` | `false` | Bump major version (1.0 release) |
 | `--sync` | `false` | After `bump`, run sync on workspace |
+| `--from <csv>` | — | Seed projects for `cascade` (default: everything unpublished) |
+| `--lib <name>` | — | Target project for `impact` |
+| `--format <fmt>` | `text` | Output format: `text`, `edn`, or `dot` (`graph` only) |
+| `--no-wait` | `false` | Plan without waiting for each wave's artifacts to publish |
+| `--await-timeout <ms>` | `900000` | Per-wave ceiling for waiting on published artifacts |
 
 ## TUI
 
