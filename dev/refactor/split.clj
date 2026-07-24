@@ -28,11 +28,15 @@
        (remove n/whitespace-or-comment?)
        (mapv (fn [node] {:text (n/string node) :sexpr (n/sexpr node)}))))
 
+(def definition-heads
+  "Top-level heads whose second element names what the form defines."
+  '#{defn defn- def deftest defspec defmacro defmulti defrecord defprotocol})
+
 (defn form-name
-  "Symbol a def/defn/defn- form defines, else nil."
+  "Symbol a definition form defines, else nil."
   [sexpr]
   (let [[head target] sexpr]
-    (when (and (contains? '#{defn defn- def} head) (symbol? target))
+    (when (and (contains? definition-heads head) (symbol? target))
       target)))
 
 (defn private?
@@ -98,10 +102,11 @@
 ;; =============================================================================
 
 (defn requires-for
-  "Require entries BODY actually uses: base requires whose alias appears, then
-   one per sibling module referenced."
-  [{:keys [base-ns base-requires]} body siblings]
-  (concat (->> base-requires
+  "Require entries BODY actually uses: always-requires, then base requires whose
+   alias appears, then one per sibling module referenced."
+  [{:keys [base-ns base-requires always-requires]} body siblings]
+  (concat always-requires
+          (->> base-requires
                (filter (fn [[alias _]] (str/includes? body (str alias "/"))))
                (map second))
           (->> siblings
@@ -163,9 +168,11 @@
         (top-level-forms source-file)))
 
 (defn split!
-  "Slice SPEC's :source-file into one file per module and rewrite the original
-   as a facade. Returns a path -> form-count map."
-  [{:keys [source-file source-dir] :as spec}]
+  "Slice SPEC's :source-file into one file per module. Unless :facade? is false
+   the original is rewritten as a re-exporting facade; otherwise it is deleted,
+   which is what a test namespace wants — re-exporting tests is meaningless.
+   Returns a path -> form-count map."
+  [{:keys [source-file source-dir facade?] :or {facade? true} :as spec}]
   (let [classified (classify spec)
         grouped (group-by :owner classified)
         modules (keys grouped)]
@@ -175,9 +182,12 @@
              (let [path (module-file source-dir module)]
                (spit path (module-source spec module forms (remove #{module} modules)))
                [path (count forms)]))
-           [(let [exports (->> classified (remove :private?) (map (juxt :name :owner)))]
-              (spit source-file (facade-source spec exports))
-              [source-file (count exports)])]))))
+           (if facade?
+             [(let [exports (->> classified (remove :private?) (map (juxt :name :owner)))]
+                (spit source-file (facade-source spec exports))
+                [source-file (count exports)])]
+             (do (clojure.java.io/delete-file source-file true)
+                 [[(str source-file " (deleted)") 0]]))))))
 
 (defn repoint!
   "Rewrite each file in FILES so references to the facade resolve against the
