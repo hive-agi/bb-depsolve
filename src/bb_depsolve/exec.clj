@@ -116,14 +116,17 @@
    OPTS: :force?     execute despite cycles or unknown seeds
          :await-opts forwarded to await/await-wave!
          :emit       (fn [event])
+         :released   {project version} already published by an earlier run
+         :on-wave    (fn [run]) called with the partial run after each wave
 
    => Result of the run. Every error value carries the partial :run."
   ([port registry plan] (run-plan! port registry plan {}))
   ([port registry plan opts]
    (r/let-ok [_ (preflight plan (:force? opts))]
-     (let [emit (get opts :emit default-emit)]
+     (let [emit (get opts :emit default-emit)
+           on-wave (get opts :on-wave (constantly nil))]
        (loop [[wave & more] (:waves plan)
-              released {}
+              released (get opts :released {})
               acc []]
          (if (nil? wave)
            (r/ok (run-value :complete acc released))
@@ -139,19 +142,25 @@
                                  outcomes)
                  failed (remove released? outcomes)]
              (if (seq failed)
-               (r/err {:kind :exec/step-failed
-                       :failed (mapv :project failed)
-                       :run (run-value :aborted
-                                       (conj acc {:index (:index wave) :steps outcomes})
-                                       released')})
+               (let [run (run-value :aborted
+                                    (conj acc {:index (:index wave) :steps outcomes})
+                                    released')]
+                 (on-wave run)
+                 (r/err {:kind :exec/step-failed
+                         :failed (mapv :project failed)
+                         :run run}))
                (let [awaited (await/await-wave! registry
                                                 (await-directive wave outcomes)
                                                 (get opts :await-opts {}))
                      record {:index (:index wave)
                              :steps outcomes
-                             :await (if (r/ok? awaited) (:ok awaited) (:error awaited))}]
+                             :await (if (r/ok? awaited) (:ok awaited) (:error awaited))}
+                     acc2 (conj acc record)]
                  (if (r/ok? awaited)
-                   (recur more released' (conj acc record))
-                   (r/err {:kind :exec/await-failed
-                           :await (:error awaited)
-                           :run (run-value :aborted (conj acc record) released')})))))))))))
+                   (do (on-wave (run-value :running acc2 released'))
+                       (recur more released' acc2))
+                   (let [run (run-value :aborted acc2 released')]
+                     (on-wave run)
+                     (r/err {:kind :exec/await-failed
+                             :await (:error awaited)
+                             :run run}))))))))))))

@@ -5,7 +5,7 @@
 (def schemas
   {:bb-depsolve/exec-status [:enum :released :sync-failed :release-failed]
 
-   :bb-depsolve/run-status [:enum :complete :aborted]
+   :bb-depsolve/run-status [:enum :running :complete :aborted]
 
    :bb-depsolve/step-outcome
    [:map

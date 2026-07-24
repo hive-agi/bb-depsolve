@@ -135,8 +135,24 @@ are released by the push itself, so no bump is planned for them.
 When a project's `VERSION` file is behind versions its consumers already pin, the plan says
 so and advances from the higher one rather than planning a downgrade.
 
-This command plans only — it never writes. `--apply` is refused rather than silently
-ignored.
+Planning is the default and writes nothing. `--apply` executes the plan: each wave is
+released, awaited, and only then does the next wave re-pin it.
+
+```bash
+bb-depsolve cascade --from hive-weave --org hive-agi --apply
+```
+
+#### Resuming an interrupted cascade
+
+A cascade is not atomic — by the time a later wave fails, earlier waves are already
+tagged and pushed. Execution therefore checkpoints the run to
+`.bb-depsolve/cascade-run.edn` after every wave.
+
+Re-running `--apply` picks the checkpoint up, skips every project it records as
+released, and continues from the first unreleased step. Already-published versions
+still feed the pin rewriting, so consumers re-pin against what actually shipped
+rather than what was planned. A run that completes clears the checkpoint; a corrupt
+one is ignored rather than aborting the run.
 
 #### Waiting between waves
 
@@ -171,11 +187,10 @@ Versions are resolved across GitHub tags, Clojars, Maven Central and — when
 
 #### What an interrupted cascade reports
 
-A release cascade is not atomic: by the time a later wave fails, earlier waves are
-already tagged and pushed. Execution therefore never discards what it finished. A
-failed run reports every wave that completed, the outcome of every step
-(`released` / `sync-failed` / `release-failed`), and the versions already published,
-so the remaining work is visible rather than reconstructed by hand.
+Execution never discards what it finished. A failed run reports every wave that
+completed, the outcome of every step (`released` / `sync-failed` / `release-failed`),
+and the versions already published, so the remaining work is visible rather than
+reconstructed by hand — and re-running `--apply` resumes from it.
 
 Execution refuses to start on a plan carrying dependency cycles or unknown seeds
 unless forced.
@@ -200,6 +215,7 @@ unless forced.
 | `--format <fmt>` | `text` | Output format: `text`, `edn`, or `dot` (`graph` only) |
 | `--no-wait` | `false` | Plan without waiting for each wave's artifacts to publish |
 | `--await-timeout <ms>` | `900000` | Per-wave ceiling for waiting on published artifacts |
+| `--force` | `false` | Execute a cascade despite cycles or unknown seeds |
 
 ## TUI
 
