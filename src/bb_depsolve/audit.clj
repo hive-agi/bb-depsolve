@@ -14,30 +14,30 @@
             [cheshire.core :as json]
             [clojure.string :as str]
             [hive-dsl.bounded-atom :as ba]
-            [hive-dsl.gate :as gate]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [hive-weave.parallel :as par]))
 
-(def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
+(def ^:private osv-concurrency
+  "Simultaneous OSV.dev queries. This is the rate limit we hold ourselves to."
+  5)
+
+(def ^:private osv-timeout-ms 30000)
 
 (defn- query-osv
   "Query OSV.dev for vulnerabilities affecting a Maven package at a version.
-   Returns Result<[parsed-vuln-map ...]>."
+   Returns Result<[parsed-vuln-map ...]>. Concurrency is bounded by the caller
+   (query-osv-batch), not here."
   [group-id artifact-id version]
   (r/try-effect*
    :io/osv-query
    (let [pkg-name (str group-id ":" artifact-id)
-         gated (gate/gate-run http-gate
-                 (fn []
-                   (http/post "https://api.osv.dev/v1/query"
-                              {:headers {"Content-Type" "application/json"}
-                               :body (json/generate-string
-                                       {:package {:name pkg-name
-                                                  :ecosystem "Maven"}
-                                        :version version})
-                               :throw false})))
-         resp (if (r/ok? gated)
-                (:ok gated)
-                (throw (ex-info "gated OSV request failed" gated)))]
+         resp (http/post "https://api.osv.dev/v1/query"
+                         {:headers {"Content-Type" "application/json"}
+                          :body (json/generate-string
+                                  {:package {:name pkg-name
+                                             :ecosystem "Maven"}
+                                   :version version})
+                          :throw false})]
      (if (= 200 (:status resp))
        (let [body (json/parse-string (:body resp) true)
              vulns (get body :vulns [])]
@@ -48,17 +48,29 @@
        []))))
 
 (defn- query-osv-batch
-  "Query OSV.dev for a batch of Maven deps. Rate-limited via gate.
-   Returns map of {:lib {:version :vulns [...]}}."
+  "Query OSV.dev for a batch of Maven deps, at most `osv-concurrency` at a time.
+   Returns map of {:lib {:version :vulns [...]}}, carrying only deps that have
+   findings. A query that times out or throws contributes nothing."
   [deps]
-  (let [results (atom {})]
-    (doseq [{:keys [lib version]} deps
-            :let [[group artifact] (v/lib->maven-coord lib)]
-            :when (and group artifact version)]
-      (let [r (query-osv group artifact version)]
-        (when (and (r/ok? r) (seq (:ok r)))
-          (swap! results assoc lib {:version version :vulns (:ok r)}))))
-    @results))
+  (let [targets (into []
+                      (keep (fn [{:keys [lib version]}]
+                              (let [[group artifact] (v/lib->maven-coord lib)]
+                                (when (and group artifact version)
+                                  {:lib lib :group group :artifact artifact
+                                   :version version}))))
+                      deps)
+        results (par/bounded-pmap
+                 {:concurrency osv-concurrency
+                  :timeout-ms  osv-timeout-ms
+                  :fallback    nil}
+                 (fn [{:keys [group artifact version]}]
+                   (query-osv group artifact version))
+                 targets)]
+    (into {}
+          (keep (fn [[{:keys [lib version]} result]]
+                  (when (and result (r/ok? result) (seq (:ok result)))
+                    [lib {:version version :vulns (:ok result)}])))
+          (map vector targets results))))
 
 (defn- collect-all-mvn-deps
   "Collect all Maven deps (direct + transitive) from dep files.

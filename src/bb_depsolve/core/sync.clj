@@ -8,7 +8,8 @@
             [bb-depsolve.schema :as sch]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]
-            [bb-depsolve.core.resolve :as resolve]))
+            [bb-depsolve.core.resolve :as resolve]
+            [hive-weave.parallel :as par]))
 
 (defn discover-internal-libs
   "Auto-discover internal deps by scanning dep files for io.github.{org}/* coords,
@@ -25,6 +26,38 @@
        (map (fn [{:keys [lib]}]
               [lib (v/lib-artifact-id lib)]))
        (into {})))
+
+(def ^:private resolve-concurrency
+  "Simultaneous tag lookups. Each is a `git ls-remote` (or a registry call), so
+   the ceiling is remote politeness, not local CPU."
+  8)
+
+(def ^:private resolve-timeout-ms 30000)
+
+(defn resolve-internal-libs
+  "Latest tag+sha for every internal lib, resolved with bounded fan-out.
+   Returns {:resolved {lib-sym {:tag :sha ...}} :failed [{:lib :error}]}.
+
+   Resolution is one remote round-trip per lib and dominates sync's wall clock,
+   so the lookups run concurrently. A lib that times out or throws surfaces in
+   :failed as :io/resolve-failed rather than vanishing from the report."
+  [root-dir internal-libs]
+  (let [entries (vec internal-libs)
+        results (par/bounded-pmap
+                 {:concurrency resolve-concurrency
+                  :timeout-ms  resolve-timeout-ms
+                  :fallback    nil}
+                 (fn [[lib-sym dir-name]]
+                   (resolve/resolve-lib-tags root-dir lib-sym dir-name))
+                 entries)]
+    (reduce (fn [acc [[lib-sym _] result]]
+              (if (and result (r/ok? result))
+                (assoc-in acc [:resolved lib-sym] (:ok result))
+                (update acc :failed conj
+                        {:lib lib-sym
+                         :error (if result (:error result) :io/resolve-failed)})))
+            {:resolved {} :failed []}
+            (map vector entries results))))
 
 (defn compute-sync-changes
   "Compute sync changes between dep files and resolved lib versions.
@@ -77,11 +110,7 @@
       (println (ui/c :bold (format "Resolving %s tags (%d libs)..." (str "io.github." org) (count internal-libs))))
       (println)
 
-      (let [resolved (into {}
-                           (for [[lib-sym dir-name] internal-libs
-                                 :let [result (resolve/resolve-lib-tags root-dir lib-sym dir-name)]
-                                 :when (r/ok? result)]
-                             [lib-sym (:ok result)]))]
+      (let [{:keys [resolved failed]} (resolve-internal-libs root-dir internal-libs)]
 
         (doseq [[lib-sym {:keys [tag sha-short sha source]}] (sort-by (comp str key) resolved)]
           (printf "  %-40s %s -> %s  (%s)\n"
@@ -89,6 +118,10 @@
                   (ui/c :green tag)
                   (ui/c :dim (or sha-short sha))
                   (name source)))
+        (doseq [{:keys [lib error]} (sort-by (comp str :lib) failed)]
+          (printf "  %-40s %s\n"
+                  (ui/c :cyan (str lib))
+                  (ui/c :yellow (str "unresolved (" error ")"))))
         (println)
 
         (println (ui/c :bold (format "Scanning %d dep files..." (count dep-files))))
