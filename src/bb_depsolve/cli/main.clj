@@ -15,7 +15,8 @@
             [bb-depsolve.wave.lock :as lock]
             [bb-depsolve.wave.hygiene :as hygiene]
             [bb-depsolve.wave.help :as help]
-            [bb-depsolve.release.inspect :as inspect]))
+            [bb-depsolve.release.inspect :as inspect]
+            [bb-depsolve.layer.cmd :as layer]))
 
 (defn- wrap-help
   "Wrap a command fn so --help prints subcommand usage instead of executing."
@@ -39,6 +40,8 @@
     :doc "Detect dep anti-patterns (:local/root, etc.)"}
    {:cmds ["deep-lint"] :fn (wrap-help deep-lint/deep-lint-cmd "deep-lint" "Lint latest tagged releases for :local/root")
     :doc "Lint latest tagged releases for :local/root anti-patterns"}
+   {:cmds ["layers"]  :fn (wrap-help layer/layers-cmd "layers" "Check every internal edge against depsolve-layers.edn")
+    :doc "Check the dependency graph against the workspace layer order"}
    {:cmds ["bump"]    :fn (wrap-help bump/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help tree/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
@@ -83,6 +86,7 @@
                           :force :boolean
                           :skip-remote :boolean
                           :no-wait :boolean
+                          :no-fail :boolean
                           :depth :long
                           :tree-depth :long
                           :await-timeout :long

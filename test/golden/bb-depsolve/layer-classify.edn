@@ -1,0 +1,9 @@
+{:downward :ok,
+ :sideways :sideways,
+ :terminal-sideways :violation,
+ :terminal-target :violation,
+ :unranked-beats-waiver :unranked,
+ :unranked-consumer :unranked,
+ :unranked-dep :unranked,
+ :upward :violation,
+ :waiver-beats-terminal :waived}
