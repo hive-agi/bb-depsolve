@@ -1,13 +1,13 @@
 (ns bb-depsolve.core.upgrade
   "The upgrade command: mvn dependency upgrades."
   (:require [babashka.fs :as fs]
-            [clojure.string :as str]
-            [hive-dsl.result :as r]
-            [bb-depsolve.version :as v]
-            [bb-depsolve.ui :as ui]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]
-            [bb-depsolve.core.resolve :as resolve]))
+            [bb-depsolve.core.resolve.registries :as registries]
+            [bb-depsolve.ui :as ui]
+            [bb-depsolve.version :as v]
+            [clojure.string :as str]
+            [hive-dsl.result :as r]))
 
 (defn apply-mvn-change!
   "Apply a single mvn version change to file content, dispatching by file type.
@@ -67,7 +67,7 @@
           (when (zero? (mod i 10))
             (printf "\r  [%d/%d] %s" (inc i) (count unique-libs) (ui/c :dim (str lib)))
             (flush))
-          (let [result (resolve/resolve-mvn-latest lib (boolean pre-release))]
+          (let [result (registries/resolve-mvn-latest lib (boolean pre-release))]
             (when (r/ok? result)
               (swap! latest-versions assoc lib (:ok result)))))
 

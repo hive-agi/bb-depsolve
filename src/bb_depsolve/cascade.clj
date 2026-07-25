@@ -24,14 +24,8 @@
      {:mode :wait|:skip :timeout-ms n
       :libs [{:lib :newer-than :expect}]}"
   (:require [bb-depsolve.graph :as graph]
-            [bb-depsolve.version :as v]))
-
-(def bump-kinds
-  "Semver segment a release advances. Ordered weakest to strongest."
-  [:patch :minor :major])
-
-(def ^:private bump-rank
-  (into {nil 0} (map-indexed (fn [i k] [k (inc i)])) bump-kinds))
+            [bb-depsolve.version :as v]
+            [bb-depsolve.cascade.bump :as bump]))
 
 (def default-await-timeout-ms
   "Ceiling for waiting on one wave's artifacts to become resolvable."
@@ -39,60 +33,6 @@
 
 (def default-await
   {:mode :wait :timeout-ms default-await-timeout-ms})
-
-(def default-bump-rules
-  "Ordered rule chain deciding a project's bump kind. The first rule whose
-   :when holds decides; :bump is a bump-kind, nil, or a fn of the context.
-
-   Context keys: :project :role :release-mode :requested-bump :upstream-bump
-   :wave-index.
-
-   Extend by prepending rules — chain entries are never edited in place."
-  [{:name :rolling-carries-no-bump
-    :when #(= :rolling (:release-mode %))
-    :bump nil}
-   {:name :seed-honours-request
-    :when #(and (= :seed (:role %))
-                (contains? (set bump-kinds) (:requested-bump %)))
-    :bump (fn [ctx] (:requested-bump ctx))}
-   {:name :consumer-of-major-takes-minor
-    :when #(and (= :consumer (:role %)) (= :major (:upstream-bump %)))
-    :bump :minor}
-   {:name :default-patch
-    :when (constantly true)
-    :bump :patch}])
-
-(defn select-bump-kind
-  "Bump kind decided by the first matching rule in RULES for CTX.
-   Returns a bump-kind or nil."
-  ([ctx] (select-bump-kind default-bump-rules ctx))
-  ([rules ctx]
-   (when-let [rule (first (filter #((:when %) ctx) rules))]
-     (let [b (:bump rule)]
-       (if (fn? b) (b ctx) b)))))
-
-(defn strongest-bump
-  "The strongest bump kind among KINDS. Returns nil when all are nil/empty."
-  [kinds]
-  (->> kinds
-       (sort-by bump-rank)
-       last))
-
-(defn- bump-fn
-  [bump-kind]
-  (case bump-kind
-    :patch v/bump-patch
-    :minor v/bump-minor
-    :major v/bump-major
-    nil))
-
-(defn next-version
-  "Version string CURRENT advances to under BUMP-KIND.
-   Returns nil when BUMP-KIND is nil or CURRENT is unparseable."
-  [current bump-kind]
-  (when-let [f (bump-fn bump-kind)]
-    (when-let [semver (some-> current v/parse-semver)]
-      (v/semver->version (f semver)))))
 
 (defn coord-version
   "VERSION rendered in COORD's shape: git coordinates carry a leading v,
@@ -157,14 +97,14 @@
   (let [node (get-in g [:nodes project])
         deps (graph/depends-on g project)
         role (if (contains? seed-set project) :seed :consumer)
-        upstream (strongest-bump (map #(get-in decided [% :bump-kind]) deps))
+        upstream (bump/strongest-bump (map #(get-in decided [% :bump-kind]) deps))
         ctx {:project project
              :role role
              :release-mode (:release-mode node)
              :requested-bump requested
              :upstream-bump upstream
              :wave-index wave-index}
-        bump-kind (select-bump-kind rules ctx)
+        bump-kind (bump/select-bump-kind rules ctx)
         {:keys [version declared observed]} (effective-version g project (:version node))]
     (cond-> {:project project
              :lib (:lib node)
@@ -173,7 +113,7 @@
              :release-mode (:release-mode node)
              :current-version version
              :bump-kind bump-kind
-             :next-version (next-version version bump-kind)
+             :next-version (bump/next-version version bump-kind)
              :pin-updates (pin-updates g project deps decided)}
       observed (assoc :version-drift {:declared declared :observed observed}))))
 
@@ -196,7 +136,7 @@
          sub (graph/induced-subgraph g closure)
          {ws :waves cyclic :cyclic} (graph/waves sub)
          on-cycle (into #{} cat (graph/cycles sub))
-         rules (get opts :bump-rules default-bump-rules)
+         rules (get opts :bump-rules bump/default-bump-rules)
          requested (get opts :requested-bump :patch)
          await-policy (merge default-await (:await opts))]
      (loop [[wave & more] ws

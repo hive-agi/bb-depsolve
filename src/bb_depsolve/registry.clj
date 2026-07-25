@@ -3,7 +3,8 @@
   (:require [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.port :as port]
             [bb-depsolve.version :as v]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.core.resolve.registries :as registries]))
 
 (defn tag-versions
   "Semver tags published for LIB, in maven form. Empty when unreachable."
@@ -22,7 +23,7 @@
 (defn mvn-versions
   "Every version of LIB the maven registries list."
   [lib allow-pre?]
-  (resolve/resolve-mvn-versions lib allow-pre?))
+  (registries/resolve-mvn-versions lib allow-pre?))
 
 (defn known-versions
   "Versions of LIB observable from any source: semver git tags plus every

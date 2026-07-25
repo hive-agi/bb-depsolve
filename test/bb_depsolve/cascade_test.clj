@@ -12,7 +12,8 @@
             [clojure.test :refer [deftest is testing]]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]
-            [clojure.test.check.properties :as prop]))
+            [clojure.test.check.properties :as prop]
+            [bb-depsolve.cascade.bump :as cbump]))
 
 ;; =============================================================================
 ;; Fixtures
@@ -42,21 +43,21 @@
 ;; =============================================================================
 
 (deftest rolling-projects-carry-no-bump-test
-  (is (nil? (cas/select-bump-kind {:role :seed :release-mode :rolling
+  (is (nil? (cbump/select-bump-kind {:role :seed :release-mode :rolling
                                    :requested-bump :major}))
       "a rolling project's version is derived, so no bump is planned"))
 
 (deftest seed-honours-the-requested-bump-test
-  (is (= :major (cas/select-bump-kind {:role :seed :release-mode :pinned
+  (is (= :major (cbump/select-bump-kind {:role :seed :release-mode :pinned
                                        :requested-bump :major})))
-  (is (= :patch (cas/select-bump-kind {:role :seed :release-mode :pinned
+  (is (= :patch (cbump/select-bump-kind {:role :seed :release-mode :pinned
                                        :requested-bump :patch}))))
 
 (deftest consumer-of-a-major-takes-a-minor-test
-  (is (= :minor (cas/select-bump-kind {:role :consumer :release-mode :pinned
+  (is (= :minor (cbump/select-bump-kind {:role :consumer :release-mode :pinned
                                        :requested-bump :major
                                        :upstream-bump :major})))
-  (is (= :patch (cas/select-bump-kind {:role :consumer :release-mode :pinned
+  (is (= :patch (cbump/select-bump-kind {:role :consumer :release-mode :pinned
                                        :requested-bump :major
                                        :upstream-bump :patch}))
       "a consumer does not inherit the seed's request, only its upstream's bump"))
@@ -65,31 +66,31 @@
   (let [rules (into [{:name :freeze-everything
                       :when #(= "frozen" (:project %))
                       :bump nil}]
-                    cas/default-bump-rules)]
-    (is (nil? (cas/select-bump-kind rules {:project "frozen" :role :seed
+                    cbump/default-bump-rules)]
+    (is (nil? (cbump/select-bump-kind rules {:project "frozen" :role :seed
                                            :release-mode :pinned
                                            :requested-bump :major})))
-    (is (= :major (cas/select-bump-kind rules {:project "other" :role :seed
+    (is (= :major (cbump/select-bump-kind rules {:project "other" :role :seed
                                                :release-mode :pinned
                                                :requested-bump :major}))
         "prepending a rule leaves the default chain intact")))
 
 (deftest strongest-bump-test
-  (is (= :major (cas/strongest-bump [:patch :major :minor])))
-  (is (= :patch (cas/strongest-bump [nil :patch])))
-  (is (nil? (cas/strongest-bump [])))
-  (is (nil? (cas/strongest-bump [nil nil]))))
+  (is (= :major (cbump/strongest-bump [:patch :major :minor])))
+  (is (= :patch (cbump/strongest-bump [nil :patch])))
+  (is (nil? (cbump/strongest-bump [])))
+  (is (nil? (cbump/strongest-bump [nil nil]))))
 
 ;; =============================================================================
 ;; Unit — version arithmetic
 ;; =============================================================================
 
 (deftest next-version-test
-  (is (= "0.5.9" (cas/next-version "0.5.8" :patch)))
-  (is (= "0.6.0" (cas/next-version "0.5.8" :minor)))
-  (is (= "1.0.0" (cas/next-version "0.5.8" :major)))
-  (is (nil? (cas/next-version "0.5.8" nil)))
-  (is (nil? (cas/next-version "not-a-version" :patch))))
+  (is (= "0.5.9" (cbump/next-version "0.5.8" :patch)))
+  (is (= "0.6.0" (cbump/next-version "0.5.8" :minor)))
+  (is (= "1.0.0" (cbump/next-version "0.5.8" :major)))
+  (is (nil? (cbump/next-version "0.5.8" nil)))
+  (is (nil? (cbump/next-version "not-a-version" :patch))))
 
 (deftest effective-version-prefers-the-highest-known-test
   (testing "a VERSION file behind the pins does not plan a downgrade"
@@ -180,7 +181,7 @@
 
 (def gen-plan
   (gen/let [[gr seeds] gt/gen-dag+seeds
-            bump (gen/elements cas/bump-kinds)]
+            bump (gen/elements cbump/bump-kinds)]
     [gr seeds (cas/plan-cascade gr seeds {:requested-bump bump})]))
 
 (defspec a-plan-never-schedules-a-downgrade 100

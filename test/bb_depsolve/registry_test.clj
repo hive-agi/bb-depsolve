@@ -7,7 +7,8 @@
             [bb-depsolve.port :as port]
             [bb-depsolve.registry :as reg]
             [clojure.test :refer [deftest is testing]]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.core.resolve.registries :as registries]))
 
 (def ^:private carto 'io.github.hive-agi/hive-carto)
 
@@ -21,7 +22,7 @@
   "Run BODY with the tag source and the maven source stubbed."
   [tag-fn mvn & body]
   `(with-redefs [resolve/resolve-remote-tags ~tag-fn
-                 resolve/resolve-mvn-versions (fn [& _#] ~mvn)]
+                 registries/resolve-mvn-versions (fn [& _#] ~mvn)]
      ~@body))
 
 ;; =============================================================================
@@ -123,7 +124,7 @@
 (deftest allow-pre-is-threaded-to-the-maven-source-test
   (let [seen (atom [])]
     (with-redefs [resolve/resolve-remote-tags unavailable
-                  resolve/resolve-mvn-versions (fn [_ allow-pre?]
+                  registries/resolve-mvn-versions (fn [_ allow-pre?]
                                                  (swap! seen conj allow-pre?)
                                                  #{"0.3.0"})]
       (port/latest-version (reg/live-registry {:allow-pre? true}) carto)

@@ -11,7 +11,8 @@
             [bb-depsolve.core.sync :as sync]
             [bb-depsolve.core.tree :as tree]
             [bb-depsolve.ui :as ui]
-            [bb-depsolve.core.upgrade :as upgrade]))
+            [bb-depsolve.core.upgrade :as upgrade]
+            [bb-depsolve.core.resolve.registries :as registries]))
 
 (def git git/git)
 (def auth-headers auth/auth-headers)
@@ -29,11 +30,11 @@
 (def resolve-local-tags resolve/resolve-local-tags)
 (def resolve-remote-tags resolve/resolve-remote-tags)
 (def resolve-lib-tags resolve/resolve-lib-tags)
-(def resolve-clojars-latest resolve/resolve-clojars-latest)
-(def resolve-maven-latest resolve/resolve-maven-latest)
+(def resolve-clojars-latest registries/resolve-clojars-latest)
+(def resolve-maven-latest registries/resolve-maven-latest)
 (def gitea-registry-url auth/gitea-registry-url)
-(def resolve-gitea-latest resolve/resolve-gitea-latest)
-(def resolve-mvn-latest resolve/resolve-mvn-latest)
+(def resolve-gitea-latest registries/resolve-gitea-latest)
+(def resolve-mvn-latest registries/resolve-mvn-latest)
 (def discover-internal-libs sync/discover-internal-libs)
 (def compute-sync-changes sync/compute-sync-changes)
 (def apply-sync-changes! sync/apply-sync-changes!)

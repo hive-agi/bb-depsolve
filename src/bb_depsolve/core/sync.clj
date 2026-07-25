@@ -9,7 +9,8 @@
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]
             [bb-depsolve.core.resolve :as resolve]
-            [hive-weave.parallel :as par]))
+            [hive-weave.parallel :as par]
+            [bb-depsolve.core.resolve.registries :as registries]))
 
 (defn discover-internal-libs
   "Auto-discover internal deps by scanning dep files for io.github.{org}/* coords,
@@ -40,7 +41,7 @@
   (let [tag-result (when (contains? coords :git)
                      (resolve/resolve-lib-tags root-dir lib-sym dir-name))
         mvn-result (when (contains? coords :mvn)
-                     (resolve/resolve-mvn-latest lib-sym false))
+                     (registries/resolve-mvn-latest lib-sym false))
         tag-info (when (r/ok? tag-result) (:ok tag-result))
         mvn-version (when (r/ok? mvn-result) (:ok mvn-result))
         resolved (cond-> (or tag-info {})

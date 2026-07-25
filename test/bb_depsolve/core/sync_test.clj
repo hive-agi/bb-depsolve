@@ -3,7 +3,8 @@
   (:require [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.core.sync :as sync]
             [clojure.test :refer [deftest is testing]]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.core.resolve.registries :as registries]))
 
 ;; =============================================================================
 ;; Fixtures
@@ -37,20 +38,20 @@
 (deftest resolve-sync-lib-uses-the-authoritative-source-per-coordinate-test
   (testing "a Maven-only lib is never asked for a git tag"
     (with-redefs [resolve/resolve-lib-tags (fn [& _] (throw (ex-info "must not run" {})))
-                  resolve/resolve-mvn-latest (fn [& _] (r/ok "0.2.21"))]
+                  registries/resolve-mvn-latest (fn [& _] (r/ok "0.2.21"))]
       (is (= {:ok {:mvn-version "0.2.21"}}
              (sync/resolve-sync-lib "." 'io.github.hive-agi/hive-shape
                                     {:dir-name "hive-shape" :coords #{:mvn}})))))
   (testing "a mixed lib keeps its tag and its independently published version"
     (with-redefs [resolve/resolve-lib-tags (fn [& _] (r/ok {:tag "v0.1.8" :sha "abcdef0123456789"
                                                             :sha-short "abcdef0" :source :remote}))
-                  resolve/resolve-mvn-latest (fn [& _] (r/ok "0.1.5"))]
+                  registries/resolve-mvn-latest (fn [& _] (r/ok "0.1.5"))]
       (is (= {:ok {:tag "v0.1.8" :sha "abcdef0123456789" :sha-short "abcdef0"
                    :source :remote :mvn-version "0.1.5"}}
              (sync/resolve-sync-lib "." 'io.github.hive-agi/hive-schemas
                                     {:dir-name "hive-schemas" :coords #{:git :mvn}})))))
   (testing "a lib whose only coordinate kind fails resolves to an error"
-    (with-redefs [resolve/resolve-mvn-latest (fn [& _] (r/err :io/no-published-version))]
+    (with-redefs [registries/resolve-mvn-latest (fn [& _] (r/err :io/no-published-version))]
       (is (= :io/no-resolved-coordinate
              (:error (sync/resolve-sync-lib "." 'io.github.hive-agi/hive-shape
                                             {:dir-name "hive-shape" :coords #{:mvn}})))))))

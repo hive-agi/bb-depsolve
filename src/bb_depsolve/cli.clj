@@ -14,7 +14,8 @@
             [bb-depsolve.wave.deep-lint :as deep-lint]
             [bb-depsolve.wave.lock :as lock]
             [bb-depsolve.wave.hygiene :as hygiene]
-            [bb-depsolve.wave.help :as help]))
+            [bb-depsolve.wave.help :as help]
+            [bb-depsolve.release.inspect :as inspect]))
 
 (defn- wrap-help
   "Wrap a command fn so --help prints subcommand usage instead of executing."
@@ -46,9 +47,9 @@
     :doc "Generate deterministic deps.lock.edn per project"}
    {:cmds ["audit"]   :fn (wrap-help audit/audit-cmd  "audit"   "Scan dependencies for known CVEs (via OSV.dev)")
     :doc "Scan dependencies for known CVEs (via OSV.dev)"}
-   {:cmds ["graph"]   :fn (wrap-help release/graph-cmd "graph"  "Show the internal dependency DAG in release order")
+   {:cmds ["graph"]   :fn (wrap-help inspect/graph-cmd "graph"  "Show the internal dependency DAG in release order")
     :doc "Show the internal dependency DAG in release order"}
-   {:cmds ["impact"]  :fn (wrap-help release/impact-cmd "impact" "Show what releasing one project forces downstream")
+   {:cmds ["impact"]  :fn (wrap-help inspect/impact-cmd "impact" "Show what releasing one project forces downstream")
     :doc "Show what releasing one project forces downstream"}
    {:cmds ["cascade"] :fn (wrap-help release/cascade-cmd "cascade" "Plan a transitive release cascade across the workspace")
     :doc "Plan a transitive release cascade across the workspace"}

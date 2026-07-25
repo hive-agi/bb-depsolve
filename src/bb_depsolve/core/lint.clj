@@ -6,7 +6,8 @@
             [bb-depsolve.version :as v]
             [bb-depsolve.ui :as ui]
             [bb-depsolve.core.discovery :as discovery]
-            [bb-depsolve.core.resolve :as resolve]))
+            [bb-depsolve.core.resolve :as resolve]
+            [bb-depsolve.core.resolve.registries :as registries]))
 
 (defn- ensure-gitignore-entry!
   "Add entry to .gitignore if not already present."
@@ -124,7 +125,7 @@
                                           (when (not= canonical lib) (str " -> " (ui/c :cyan (str canonical))))
                                           " -> " (ui/c :green tag) " " (ui/c :dim use-sha)
                                           " (local sibling: " sibling-dir ")")))
-                          (let [mvn-result (resolve/resolve-mvn-latest lib false)]
+                          (let [mvn-result (registries/resolve-mvn-latest lib false)]
                             (if (r/ok? mvn-result)
                               (let [version (:ok mvn-result)]
                                 (swap! updated-content v/replace-local-with-mvn lib version)
