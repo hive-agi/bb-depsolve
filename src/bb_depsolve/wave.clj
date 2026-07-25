@@ -47,7 +47,7 @@
             (do
               (doseq [{:keys [project dir]} @to-bump]
                 (println (ui/c :bold (str "Bumping " project "...")))
-                (bump/bump-cmd {:opts {:root dir :minor true}}))
+                (bump/bump-cmd {:opts {:root dir :apply true}}))
               (println)
               (when org
                 (println (ui/c :bold "Re-syncing workspace after bumps..."))

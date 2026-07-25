@@ -17,7 +17,8 @@
             [bb-depsolve.git-port :as git-port]
             [bb-depsolve.registry :as registry]
             [bb-depsolve.resume :as resume]
-            [bb-depsolve.reconcile :as reconcile]))
+            [bb-depsolve.reconcile :as reconcile]
+            [bb-depsolve.core.bump :as bump]))
 
 (defn- skip-set
   [skip-dirs]
@@ -26,13 +27,10 @@
     discovery/default-skip-dirs))
 
 (defn- requested-bump
-  "Bump kind a set of CLI flags asks for. Mirrors bump-cmd's flag mapping:
-   --stable raises the major segment, --major the minor, everything else the
-   patch."
-  [{:keys [major stable]}]
-  (cond stable :major
-        major :minor
-        :else :patch))
+  "Bump kind a set of CLI flags asks for. One mapping for the whole tool:
+   bb-depsolve.core.bump/bump-level."
+  [opts]
+  (bump/bump-level opts))
 
 (defn- parse-seeds
   "Seed project names from a comma-separated --from value. Nil when absent."

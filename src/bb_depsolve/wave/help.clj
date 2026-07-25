@@ -45,7 +45,7 @@
   (println "  --format <fmt>     text (default) | edn | dot (graph only)")
   (println "  --no-wait          Plan without waiting for each wave to publish")
   (println "  --await-timeout <ms>  Per-wave publish-wait ceiling (default: 900000)")
-  (println "  --major / --stable    Bump the seed's minor / major segment")
+  (println "  --major / --minor / --stable   Seed bump: major / minor / major (1.0)")
   (println)
   (println (ui/c :bold "Automation options:"))
   (println "  --commit           Auto-commit dep changes per project (for upgrade/sync/lint)")

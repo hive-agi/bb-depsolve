@@ -64,19 +64,23 @@ bb-depsolve lint --root . --fix  # auto-split :local/root into local.deps.edn
 
 Reads a project's `VERSION` file, increments the version, commits, tags, and pushes. Designed for pre-1.0 semver conventions.
 
+Without `--apply` the command is a **dry run**: it prints the planned bump and touches nothing. Tagging and pushing mint a release, so they only happen when you ask for them.
+
 ```bash
-bb-depsolve bump                          # minor (patch): 0.2.1 -> 0.2.2
-bb-depsolve bump --major                  # major (minor): 0.2.1 -> 0.3.0
-bb-depsolve bump --stable                 # stable (major): 0.2.1 -> 1.0.0
-bb-depsolve bump --sync --org hive-agi    # bump + update downstream deps
+bb-depsolve bump                          # dry run: 0.2.1 -> 0.2.2 (patch)
+bb-depsolve bump --apply                  # patch:  0.2.1 -> 0.2.2, tag + push
+bb-depsolve bump --minor --apply          # minor:  0.2.1 -> 0.3.0
+bb-depsolve bump --stable --apply         # major:  0.2.1 -> 1.0.0
+bb-depsolve bump --apply --sync --org hive-agi    # bump + update downstream deps
 ```
 
 | Flag | Effect | Example |
 |------|--------|---------|
 | _(default)_ | Bump patch | `0.2.1` → `0.2.2` |
-| `--minor` | Bump patch | `0.2.1` → `0.2.2` |
-| `--major` | Bump minor, zero patch | `0.2.1` → `0.3.0` |
-| `--stable` | Bump major, zero rest | `0.2.1` → `1.0.0` |
+| `--minor` | Bump minor, zero patch | `0.2.1` → `0.3.0` |
+| `--major` | Bump major, zero rest | `0.2.1` → `1.0.0` |
+| `--stable` | Bump major, zero rest — the 1.0.0 promotion | `0.2.1` → `1.0.0` |
+| `--apply` | Write VERSION, commit, tag, push (default: dry run) | |
 | `--sync --org <name>` | After bump, run `sync --apply` on workspace | |
 
 ### `report` — Dependency matrix
@@ -206,9 +210,9 @@ unless forced.
 | `--apply` | `false` | Write changes (default: dry-run) |
 | `--fix` | `false` | Auto-fix lint issues (split `:local/root` into `local.deps.edn`) |
 | `--pre-release` | `false` | Include pre-release versions in `upgrade` |
-| `--major` | `false` | Bump minor version (pre-1.0 major) |
-| `--minor` | `false` | Bump patch version (explicit, same as default) |
-| `--stable` | `false` | Bump major version (1.0 release) |
+| `--major` | `false` | Bump major version |
+| `--minor` | `false` | Bump minor version |
+| `--stable` | `false` | Bump major version (the 1.0 promotion) |
 | `--sync` | `false` | After `bump`, run sync on workspace |
 | `--from <csv>` | — | Seed projects for `cascade` (default: everything unpublished) |
 | `--lib <name>` | — | Target project for `impact` |
