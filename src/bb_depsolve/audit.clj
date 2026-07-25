@@ -26,15 +26,18 @@
   (r/try-effect*
    :io/osv-query
    (let [pkg-name (str group-id ":" artifact-id)
-         resp (gate/gate-run http-gate
-                (fn []
-                  (http/post "https://api.osv.dev/v1/query"
-                             {:headers {"Content-Type" "application/json"}
-                              :body (json/generate-string
-                                      {:package {:name pkg-name
-                                                 :ecosystem "Maven"}
-                                       :version version})
-                              :throw false})))]
+         gated (gate/gate-run http-gate
+                 (fn []
+                   (http/post "https://api.osv.dev/v1/query"
+                              {:headers {"Content-Type" "application/json"}
+                               :body (json/generate-string
+                                       {:package {:name pkg-name
+                                                  :ecosystem "Maven"}
+                                        :version version})
+                               :throw false})))
+         resp (if (r/ok? gated)
+                (:ok gated)
+                (throw (ex-info "gated OSV request failed" gated)))]
      (if (= 200 (:status resp))
        (let [body (json/parse-string (:body resp) true)
              vulns (get body :vulns [])]

@@ -11,6 +11,20 @@
 
 (def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
 
+(defn- gated-get
+  "GET URL under the shared HTTP gate, carrying the credentials registered for
+   TARGET. Returns the raw http response map. Throws when the gate itself
+   refuses (timeout / execution failure) so the enclosing `try-effect*` reports
+   it as an error Result rather than mistaking it for a missing artifact."
+  [url target]
+  (let [headers (auth/auth-headers target)
+        res (gate/gate-run http-gate
+              (fn [] (http/get url (merge {:throw false}
+                                          (when (seq headers) {:headers headers})))))]
+    (if (r/ok? res)
+      (:ok res)
+      (throw (ex-info "gated HTTP request failed" res)))))
+
 (defn- fetch-pom-xml
   "Fetch POM XML from a URL. Returns Result<string>.
    Selects auth headers by URL prefix (clojars vs maven)."
@@ -22,13 +36,10 @@
                   (str/includes? url "maven.org")      :maven
                   (str/includes? url "repo1.maven")    :maven
                   :else                                 :none)
-         headers (auth/auth-headers target)
-         resp (gate/gate-run http-gate
-                (fn [] (http/get url (merge {:throw false}
-                                            (when (seq headers) {:headers headers})))))]
+         resp (gated-get url target)]
      (if (= 200 (:status resp))
        (:body resp)
-       (throw (ex-info "POM not found" {:url url}))))))
+       (throw (ex-info "POM not found" {:url url :status (:status resp)}))))))
 
 (defn- warn-unresolved-coord
   "I/O boundary warn-fn for coordinates dropped because they still contain
@@ -63,7 +74,7 @@
 (defn fetch-git-deps-edn
   "Fetch raw deps.edn content from a forge. Returns Result<string>.
    Uses bb-depsolve.version/forge-raw-url to pick the per-forge URL shape and
-   bb-depsolve.core/auth-headers to attach private-registry creds."
+   bb-depsolve.core.auth/auth-headers to attach private-registry creds."
   ([org repo tag]
    (fetch-git-deps-edn :github org repo tag))
   ([forge org repo tag]
@@ -71,14 +82,12 @@
     :io/fetch-git-deps
     (let [url (or (v/forge-raw-url forge org repo tag "deps.edn")
                   (throw (ex-info "Unsupported forge" {:forge forge})))
-          headers (auth/auth-headers forge)
-          resp (gate/gate-run http-gate
-                 (fn [] (http/get url (merge {:throw false}
-                                             (when (seq headers) {:headers headers})))))]
+          resp (gated-get url forge)]
       (if (= 200 (:status resp))
         (:body resp)
         (throw (ex-info "deps.edn not found"
-                        {:forge forge :org org :repo repo :tag tag})))))))
+                        {:forge forge :org org :repo repo :tag tag
+                         :status (:status resp)})))))))
 
 (defn fetch-git-dep-coords
   "Fetch deps.edn from GitHub raw content for a git dep.
