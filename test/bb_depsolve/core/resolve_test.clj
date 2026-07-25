@@ -9,7 +9,8 @@
   (with-redefs [auth/gitea-registry-url (constantly "https://registry.example/maven")
                 resolve/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
                 resolve/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
-                resolve/resolve-gitea-latest (fn [& _] (r/ok "0.1.3"))]
+                resolve/resolve-gitea-latest (fn [& _] (r/ok "0.1.3"))
+                resolve/resolve-cached-maven-latest (fn [& _] (r/err :io/maven-cache))]
     (is (= {:ok "0.1.3"}
            (resolve/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
 
@@ -17,9 +18,20 @@
   (with-redefs [auth/gitea-registry-url (constantly "https://registry.example/maven")
                 resolve/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
                 resolve/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
-                resolve/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))]
+                resolve/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))
+                resolve/resolve-cached-maven-latest (fn [& _] (r/err :io/maven-cache))]
     (is (= {:ok "0.1.2"}
            (resolve/resolve-mvn-latest 'io.github.hive-agi/hive-carto false)))))
+
+(deftest resolve-mvn-latest-consults-the-local-maven-cache-test
+  (with-redefs [auth/gitea-registry-url (constantly "https://registry.example/maven")
+                resolve/resolve-clojars-latest (fn [& _] (r/ok "0.1.2"))
+                resolve/resolve-maven-latest (fn [& _] (r/err :unexpected/fallback))
+                resolve/resolve-gitea-latest (fn [& _] (r/err :io/unavailable))
+                resolve/resolve-cached-maven-latest (fn [& _] (r/ok "0.1.4"))]
+    (is (= {:ok "0.1.4"}
+           (resolve/resolve-mvn-latest 'io.github.hive-agi/hive-carto false))
+        "cached REMOTE metadata is an offline view of a private registry")))
 
 (deftest resolve-mvn-latest-errs-when-every-registry-fails-test
   (with-redefs [auth/gitea-registry-url (constantly nil)

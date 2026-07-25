@@ -14,18 +14,40 @@
 (defn discover-internal-libs
   "Auto-discover internal deps by scanning dep files for io.github.{org}/* coords,
    in both :git/tag+:git/sha and :mvn/version form.
-   Returns map of lib-sym -> dir-name."
+   Returns map of lib-sym -> {:dir-name string :coords #{:git|:mvn}}.
+   The coordinate kinds a lib is actually pinned by decide what has to be
+   resolved for it: tags for :git, published registry versions for :mvn."
   [dep-files org]
   (->> dep-files
        (remove discovery/shadow-deps-file?)
        (mapcat (fn [{:keys [path]}]
                  (let [content (slurp path)]
-                   (concat (v/find-git-deps content)
-                           (v/find-mvn-deps content)))))
+                   (concat (map #(assoc % :coord :git) (v/find-git-deps content))
+                           (map #(assoc % :coord :mvn) (v/find-mvn-deps content))))))
        (filter #(v/lib-matches-org? org (:lib %)))
-       (map (fn [{:keys [lib]}]
-              [lib (v/lib-artifact-id lib)]))
-       (into {})))
+       (reduce (fn [libs {:keys [lib coord]}]
+                 (-> libs
+                     (assoc-in [lib :dir-name] (v/lib-artifact-id lib))
+                     (update-in [lib :coords] (fnil conj #{}) coord)))
+               {})))
+
+(defn resolve-sync-lib
+  "Resolve only the coordinate kinds actually used for an internal lib.
+   Git coords come from tags; Maven coords come from published registries — a
+   tag is not proof that an artifact exists. Returns Result<resolved-lib>,
+   partial when only one coordinate kind resolves."
+  [root-dir lib-sym {:keys [dir-name coords]}]
+  (let [tag-result (when (contains? coords :git)
+                     (resolve/resolve-lib-tags root-dir lib-sym dir-name))
+        mvn-result (when (contains? coords :mvn)
+                     (resolve/resolve-mvn-latest lib-sym false))
+        tag-info (when (r/ok? tag-result) (:ok tag-result))
+        mvn-version (when (r/ok? mvn-result) (:ok mvn-result))
+        resolved (cond-> (or tag-info {})
+                   mvn-version (assoc :mvn-version mvn-version))]
+    (if (seq resolved)
+      (r/ok (sch/validate! :bb-depsolve/resolved-lib resolved))
+      (r/err :io/no-resolved-coordinate {:lib lib-sym :coords coords}))))
 
 (def ^:private resolve-concurrency
   "Simultaneous tag lookups. Each is a `git ls-remote` (or a registry call), so
@@ -35,20 +57,21 @@
 (def ^:private resolve-timeout-ms 30000)
 
 (defn resolve-internal-libs
-  "Latest tag+sha for every internal lib, resolved with bounded fan-out.
-   Returns {:resolved {lib-sym {:tag :sha ...}} :failed [{:lib :error}]}.
+  "Resolve every internal lib's coordinates with bounded fan-out.
+   Returns {:resolved {lib-sym resolved-lib} :failed [{:lib :error}]}.
 
-   Resolution is one remote round-trip per lib and dominates sync's wall clock,
-   so the lookups run concurrently. A lib that times out or throws surfaces in
-   :failed as :io/resolve-failed rather than vanishing from the report."
+   Resolution is one or more remote round-trips per lib and dominates sync's
+   wall clock, so the lookups run concurrently. A lib that times out or throws
+   surfaces in :failed as :io/resolve-failed rather than vanishing from the
+   report."
   [root-dir internal-libs]
   (let [entries (vec internal-libs)
         results (par/bounded-pmap
                  {:concurrency resolve-concurrency
                   :timeout-ms  resolve-timeout-ms
                   :fallback    nil}
-                 (fn [[lib-sym dir-name]]
-                   (resolve/resolve-lib-tags root-dir lib-sym dir-name))
+                 (fn [[lib-sym discovery]]
+                   (resolve-sync-lib root-dir lib-sym discovery))
                  entries)]
     (reduce (fn [acc [[lib-sym _] result]]
               (if (and result (r/ok? result))
@@ -58,6 +81,16 @@
                          :error (if result (:error result) :io/resolve-failed)})))
             {:resolved {} :failed []}
             (map vector entries results))))
+
+(defn resolution-line
+  "One report line for a resolved lib. A lib pinned only by :mvn/version has no
+   tag and no tag source, so every part is optional."
+  [{:keys [tag sha-short sha source mvn-version]}]
+  (str/join "  "
+            (cond-> []
+              tag         (conj (str (ui/c :green tag) " -> " (ui/c :dim (or sha-short sha))))
+              mvn-version (conj (str (ui/c :green mvn-version) (ui/c :dim " (mvn)")))
+              source      (conj (ui/c :dim (str "(" (name source) ")"))))))
 
 (defn compute-sync-changes
   "Compute sync changes between dep files and resolved lib versions.
@@ -107,17 +140,13 @@
       (System/exit 1))
 
     (let [internal-libs (discover-internal-libs dep-files org)]
-      (println (ui/c :bold (format "Resolving %s tags (%d libs)..." (str "io.github." org) (count internal-libs))))
+      (println (ui/c :bold (format "Resolving %s coordinates (%d libs)..." (str "io.github." org) (count internal-libs))))
       (println)
 
       (let [{:keys [resolved failed]} (resolve-internal-libs root-dir internal-libs)]
 
-        (doseq [[lib-sym {:keys [tag sha-short sha source]}] (sort-by (comp str key) resolved)]
-          (printf "  %-40s %s -> %s  (%s)\n"
-                  (ui/c :cyan (str lib-sym))
-                  (ui/c :green tag)
-                  (ui/c :dim (or sha-short sha))
-                  (name source)))
+        (doseq [[lib-sym info] (sort-by (comp str key) resolved)]
+          (printf "  %-40s %s\n" (ui/c :cyan (str lib-sym)) (resolution-line info)))
         (doseq [{:keys [lib error]} (sort-by (comp str :lib) failed)]
           (printf "  %-40s %s\n"
                   (ui/c :cyan (str lib))

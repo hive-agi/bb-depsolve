@@ -10,9 +10,9 @@
 ;; =============================================================================
 
 (def ^:private libs
-  {'io.github.hive-agi/hive-dsl "hive-dsl"
-   'io.github.hive-agi/hive-test "hive-test"
-   'io.github.hive-agi/hive-weave "hive-weave"})
+  {'io.github.hive-agi/hive-dsl   {:dir-name "hive-dsl" :coords #{:git}}
+   'io.github.hive-agi/hive-test  {:dir-name "hive-test" :coords #{:git}}
+   'io.github.hive-agi/hive-weave {:dir-name "hive-weave" :coords #{:git}}})
 
 (defn- resolved-as [tag]
   {:tag tag :sha "abcdef1234" :sha-short "abcdef1" :source :remote})
@@ -21,18 +21,39 @@
 ;; Unit — discover-internal-libs
 ;; =============================================================================
 
-(deftest discover-internal-libs-finds-git-and-mvn-coords-test
+(deftest discover-internal-libs-preserves-coordinate-kinds-test
   (let [dep-files [{:path "/w/a/deps.edn" :type :deps-edn :project "a"}]
-        content (str "{:deps {io.github.hive-agi/hive-dsl {:git/tag \"v0.5.8\" :git/sha \"755baf5\"}\n"
-                     "        io.github.hive-agi/hive-weave {:mvn/version \"0.3.1\"}\n"
-                     "        metosin/malli {:mvn/version \"0.20.1\"}}}")]
+        content (str "{:deps {io.github.hive-agi/hive-shape {:mvn/version \"0.2.20\"}\n"
+                     "        io.github.hive-agi/hive-test {:git/tag \"v0.3.7\" :git/sha \"abcdef0\"\n"
+                     "                                      :mvn/version \"0.3.7\"}\n"
+                     "        outsider/lib {:mvn/version \"1.0.0\"}}}")]
     (with-redefs [slurp (constantly content)]
-      (let [found (sync/discover-internal-libs dep-files "hive-agi")]
-        (is (= #{'io.github.hive-agi/hive-dsl 'io.github.hive-agi/hive-weave}
-               (set (keys found)))
-            "only io.github.hive-agi/* coords are internal, in either coord shape")
-        (is (= "hive-dsl" (found 'io.github.hive-agi/hive-dsl))
-            "the value is the sibling directory name")))))
+      (is (= {'io.github.hive-agi/hive-shape {:dir-name "hive-shape" :coords #{:mvn}}
+              'io.github.hive-agi/hive-test {:dir-name "hive-test" :coords #{:git :mvn}}}
+             (sync/discover-internal-libs dep-files "hive-agi"))
+          "only io.github.hive-agi/* coords are internal, and each lib remembers
+           which coordinate kinds must be resolved for it"))))
+
+(deftest resolve-sync-lib-uses-the-authoritative-source-per-coordinate-test
+  (testing "a Maven-only lib is never asked for a git tag"
+    (with-redefs [resolve/resolve-lib-tags (fn [& _] (throw (ex-info "must not run" {})))
+                  resolve/resolve-mvn-latest (fn [& _] (r/ok "0.2.21"))]
+      (is (= {:ok {:mvn-version "0.2.21"}}
+             (sync/resolve-sync-lib "." 'io.github.hive-agi/hive-shape
+                                    {:dir-name "hive-shape" :coords #{:mvn}})))))
+  (testing "a mixed lib keeps its tag and its independently published version"
+    (with-redefs [resolve/resolve-lib-tags (fn [& _] (r/ok {:tag "v0.1.8" :sha "abcdef0123456789"
+                                                            :sha-short "abcdef0" :source :remote}))
+                  resolve/resolve-mvn-latest (fn [& _] (r/ok "0.1.5"))]
+      (is (= {:ok {:tag "v0.1.8" :sha "abcdef0123456789" :sha-short "abcdef0"
+                   :source :remote :mvn-version "0.1.5"}}
+             (sync/resolve-sync-lib "." 'io.github.hive-agi/hive-schemas
+                                    {:dir-name "hive-schemas" :coords #{:git :mvn}})))))
+  (testing "a lib whose only coordinate kind fails resolves to an error"
+    (with-redefs [resolve/resolve-mvn-latest (fn [& _] (r/err :io/no-published-version))]
+      (is (= :io/no-resolved-coordinate
+             (:error (sync/resolve-sync-lib "." 'io.github.hive-agi/hive-shape
+                                            {:dir-name "hive-shape" :coords #{:mvn}})))))))
 
 ;; =============================================================================
 ;; Unit — resolve-internal-libs (bounded fan-out)
@@ -47,7 +68,7 @@
           "results are keyed back to the lib that produced them, not by position"))))
 
 (deftest resolve-internal-libs-reports-what-it-could-not-resolve-test
-  (testing "an error Result keeps its own error key"
+  (testing "a lib whose coordinates all fail is reported, not silently dropped"
     (with-redefs [resolve/resolve-lib-tags
                   (fn [_ lib _]
                     (if (= 'io.github.hive-agi/hive-test lib)
@@ -55,8 +76,8 @@
                       (r/ok (resolved-as "v1.0.0"))))]
       (let [{:keys [resolved failed]} (sync/resolve-internal-libs "/w" libs)]
         (is (= 2 (count resolved)))
-        (is (= [{:lib 'io.github.hive-agi/hive-test :error :parse/no-semver-tags}] failed)
-            "an unresolvable lib is reported, not silently dropped"))))
+        (is (= [{:lib 'io.github.hive-agi/hive-test :error :io/no-resolved-coordinate}]
+               failed)))))
   (testing "a thrown lookup becomes :io/resolve-failed"
     (with-redefs [resolve/resolve-lib-tags
                   (fn [_ lib _]

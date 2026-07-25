@@ -33,7 +33,7 @@
    [:map [:lib :bb-depsolve/lib] [:version :string] [:match :string]]
 
    :bb-depsolve/resolved-lib
-   [:map [:tag :string] [:sha :string] [:sha-short {:optional true} :string]]
+   [:and [:map [:tag {:optional true} :string] [:sha {:optional true} :string] [:sha-short {:optional true} :string] [:mvn-version {:optional true} :string]] [:fn #:error{:message "must resolve a git coordinate, a Maven coordinate, or both"} (fn [{:keys [tag sha mvn-version]}] (or (and tag sha) mvn-version))]]
 
    :bb-depsolve/resolved
    [:map-of :bb-depsolve/lib :bb-depsolve/resolved-lib]

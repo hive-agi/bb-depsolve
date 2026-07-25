@@ -63,8 +63,12 @@
                      {:lib 'a/b :coord :mvn :old-version "0.3.0" :new-version "0.3.6"}))
     (is (not (hs/validate :bb-depsolve/sync-change
                           {:lib 'a/b :coord :mvn :old-version 1 :new-version "0.3.6"}))))
-  (testing "resolved-lib tolerates missing :sha-short (local tags)"
-    (is (hs/validate :bb-depsolve/resolved-lib {:tag "v0.3.6" :sha "2fe7a14"}))))
+  (testing "resolved-lib accepts Git, Maven, or mixed resolution"
+    (is (hs/validate :bb-depsolve/resolved-lib {:tag "v0.3.6" :sha "2fe7a14"}))
+    (is (hs/validate :bb-depsolve/resolved-lib {:mvn-version "0.3.5"}))
+    (is (hs/validate :bb-depsolve/resolved-lib
+                     {:tag "v0.3.6" :sha "2fe7a14" :mvn-version "0.3.5"}))
+    (is (not (hs/validate :bb-depsolve/resolved-lib {})))))
 
 (deftest validate!-fail-loud-test
   (is (thrown? clojure.lang.ExceptionInfo
@@ -116,7 +120,8 @@
   "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.0\"}}}")
 
 (def ^:private resolved
-  '{io.github.hive-agi/hive-test {:tag "v0.3.6" :sha "2fe7a14aaaa" :sha-short "2fe7a14"}})
+  '{io.github.hive-agi/hive-test {:tag "v0.3.6" :sha "2fe7a14aaaa" :sha-short "2fe7a14"
+                                  :mvn-version "0.3.5"}})
 
 (defn- sync-change-assertions []
   (let [git-changes (v/sync-changes-in-content git-drift-content resolved)
@@ -131,7 +136,7 @@
       (is (= :git (:coord (first git-changes))))
       (is (= "v0.3.6" (:new-tag (first git-changes))))
       (is (= :mvn (:coord (first mvn-changes))))
-      (is (= "0.3.6" (:new-version (first mvn-changes)))))
+      (is (= "0.3.5" (:new-version (first mvn-changes)))))
     (testing "every emitted :lib is present in resolved"
       (is (every? #(contains? resolved (:lib %)) git-changes))
       (is (every? #(contains? resolved (:lib %)) mvn-changes)))))
@@ -141,3 +146,11 @@
   [(mc/always [])
    (mc/echo-arg 0)]
   sync-change-assertions)
+
+(deftest resolved-lib-accepts-git-maven-or-mixed-resolution-test
+  (is (hs/validate :bb-depsolve/resolved-lib {:tag "v0.3.6" :sha "2fe7a14"}))
+  (is (hs/validate :bb-depsolve/resolved-lib {:mvn-version "0.3.5"}))
+  (is (hs/validate :bb-depsolve/resolved-lib
+                   {:tag "v0.3.6" :sha "2fe7a14" :mvn-version "0.3.5"}))
+  (is (not (hs/validate :bb-depsolve/resolved-lib {}))
+      "a lib that resolved neither coordinate kind is not a resolution"))

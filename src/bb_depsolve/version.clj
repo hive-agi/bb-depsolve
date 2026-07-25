@@ -17,6 +17,9 @@
 (def version-compare semver/version-compare)
 (def latest-tag semver/latest-tag)
 (def find-git-deps parse/find-git-deps)
+
+(def parse-local-tag-output parse/parse-local-tag-output)
+(def parse-ls-remote-tags parse/parse-ls-remote-tags)
 (def find-git-sha-only-deps parse/find-git-sha-only-deps)
 (def dep-coords-by-scope parse/dep-coords-by-scope)
 (def runtime-libs parse/runtime-libs)

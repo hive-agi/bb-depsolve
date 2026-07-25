@@ -125,3 +125,30 @@
 
   (testing "returns empty for nil"
     (is (= [] (v/deps-edn->dep-coords nil)))))
+
+(deftest parse-tag-output-prefers-peeled-commit-test
+  (testing "remote annotated tag uses peeled commit even when tag object appears first"
+    (is (= [{:tag "v0.1.0" :sha "1111111111111111111111111111111111111111"
+             :sha-short "1111111"}
+            {:tag "v0.2.0" :sha "3333333333333333333333333333333333333333"
+             :sha-short "3333333"}]
+           (v/parse-ls-remote-tags
+            (str "1111111111111111111111111111111111111111\trefs/tags/v0.1.0\n"
+                 "2222222222222222222222222222222222222222\trefs/tags/v0.2.0\n"
+                 "3333333333333333333333333333333333333333\trefs/tags/v0.2.0^{}\n")))))
+  (testing "remote peeled line keeps precedence when it appears first"
+    (is (= "3333333333333333333333333333333333333333"
+           (:sha (first (v/parse-ls-remote-tags
+                         (str "3333333333333333333333333333333333333333\trefs/tags/v0.2.0^{}\n"
+                              "2222222222222222222222222222222222222222\trefs/tags/v0.2.0\n")))))))
+  (testing "local output chooses peeled SHA for annotated and direct SHA for lightweight tags"
+    (is (= [{:tag "v0.2.0" :sha "3333333333333333333333333333333333333333"
+             :sha-short "3333333"}
+            {:tag "v0.1.0" :sha "1111111111111111111111111111111111111111"
+             :sha-short "1111111"}]
+           (v/parse-local-tag-output
+            (str "v0.2.0\t3333333333333333333333333333333333333333\t2222222222222222222222222222222222222222\n"
+                 "v0.1.0\t\t1111111111111111111111111111111111111111\n")))))
+  (testing "malformed lines are ignored"
+    (is (= [] (v/parse-local-tag-output "")))
+    (is (= [] (v/parse-ls-remote-tags nil)))))

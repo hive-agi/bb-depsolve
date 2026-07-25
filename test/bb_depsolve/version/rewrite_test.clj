@@ -74,7 +74,8 @@
 (deftest sync-changes-in-content-test
   (let [resolved '{io.github.hive-agi/hive-test {:tag "v0.3.6"
                                                  :sha "2fe7a14aaaaaaa"
-                                                 :sha-short "2fe7a14"}
+                                                 :sha-short "2fe7a14"
+                                                 :mvn-version "0.3.6"}
                    io.github.hive-agi/hive-mcp  {:tag "v0.18.0"
                                                  :sha "088c7dfbbbbbbb"
                                                  :sha-short "088c7df"}}]
@@ -87,7 +88,7 @@
               "{:deps {io.github.hive-agi/hive-test {:git/tag \"v0.3.0\" :git/sha \"763e4bc\"}}}"
               resolved))))
 
-    (testing "mvn drift detected against tag->mvn-version"
+    (testing "mvn drift detected against the published version"
       (is (= [{:lib 'io.github.hive-agi/hive-test :coord :mvn
                :old-version "0.3.0" :new-version "0.3.6"}]
              (v/sync-changes-in-content
@@ -115,3 +116,31 @@
                    "{:deps {io.github.hive-agi/hive-mcp {:git/tag \"v0.16.7\" :git/sha \"0222203\"}
                             io.github.hive-agi/hive-test {:mvn/version \"0.2.1\"}}}"
                    resolved)))))))
+
+(deftest mvn-drift-follows-the-published-version-not-the-tag-test
+  (let [resolved '{io.github.hive-agi/hive-test {:tag "v0.3.6" :sha "2fe7a14aaaa"
+                                                 :sha-short "2fe7a14"
+                                                 :mvn-version "0.3.5"}}]
+    (testing "mvn drift is measured against the published registry version"
+      (is (= [{:lib 'io.github.hive-agi/hive-test :coord :mvn
+               :old-version "0.3.0" :new-version "0.3.5"}]
+             (v/sync-changes-in-content
+              "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.0\"}}}"
+              resolved))
+          "the tag says v0.3.6; only 0.3.5 is actually published"))
+    (testing "a coordinate already at the published version does not drift"
+      (is (= []
+             (v/sync-changes-in-content
+              "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.5\"}}}"
+              resolved)))))
+  (testing "tag-only resolution never mutates a Maven coordinate"
+    (is (= []
+           (v/sync-changes-in-content
+            "{:deps {io.github.hive-agi/hive-test {:mvn/version \"0.3.0\"}}}"
+            '{io.github.hive-agi/hive-test {:tag "v0.3.6" :sha "2fe7a14aaaa"
+                                            :sha-short "2fe7a14"}}))))
+  (testing "maven-only resolution never mutates a git coordinate"
+    (is (= []
+           (v/sync-changes-in-content
+            "{:deps {io.github.hive-agi/hive-test {:git/tag \"v0.3.0\" :git/sha \"aaaaaaa\"}}}"
+            '{io.github.hive-agi/hive-test {:mvn-version "0.3.5"}})))))

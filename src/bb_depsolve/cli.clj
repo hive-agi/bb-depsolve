@@ -29,8 +29,7 @@
       (cmd-fn m))))
 
 (def dispatch-table
-  [{:cmds ["sync"]    :fn (wrap-help sync/sync-cmd    "sync"    "Sync internal git deps to latest tags")
-    :doc "Sync internal git deps to latest tags"}
+  [{:cmds ["sync"], :fn (wrap-help sync/sync-cmd "sync" "Sync internal Git coords to tags and Maven coords to published registry versions"), :doc "Sync internal Git and Maven coords to their authoritative sources"}
    {:cmds ["upgrade"] :fn (wrap-help upgrade/upgrade-cmd  "upgrade" "Upgrade all deps to latest versions")
     :doc "Upgrade all deps to latest versions"}
    {:cmds ["report"]  :fn (wrap-help report/report-cmd   "report"  "Show dependency matrix")

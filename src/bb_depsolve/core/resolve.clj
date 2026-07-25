@@ -13,35 +13,30 @@
             [hive-dsl.result :as r]))
 
 (defn resolve-local-tags
-  "Resolve all tags from a local git repo. Returns Result<[{:tag :sha}]>."
+  "Resolve all tags from a local git repo. Returns Result<[{:tag :sha :sha-short}]>.
+   Annotated tags report the commit behind them, which is what tools.deps
+   validates a :git/sha against."
   [repo-dir]
   (r/try-effect*
    :io/git-local-tags
    (let [result (proc/sh ["git" "-C" (str repo-dir) "tag" "--sort=-version:refname"
-                          "-l" "v*" "--format=%(refname:short) %(objectname:short)"])]
+                          "-l" "v*"
+                          "--format=%(refname:short)%09%(*objectname)%09%(objectname)"])]
      (if (zero? (:exit result))
-       (->> (str/split-lines (:out result))
-            (remove str/blank?)
-            (mapv (fn [line]
-                    (let [[tag sha] (str/split line #"\s+" 2)]
-                      {:tag tag :sha sha}))))
+       (v/parse-local-tag-output (:out result))
        (throw (ex-info "git tag failed" {:exit (:exit result)}))))))
 
 (defn resolve-remote-tags
-  "Resolve tags from GitHub via git ls-remote. Returns Result<[{:tag :sha :sha-short}]>."
+  "Resolve tags from a GitHub remote without cloning.
+   Returns Result<[{:tag :sha :sha-short}]>. Annotated tags report their peeled
+   commit, which is what tools.deps validates a :git/sha against."
   [org repo]
   (r/try-effect*
-   :io/git-remote-tags
+   :io/git-ls-remote
    (let [url (format auth/github-url org repo)
          result (proc/sh ["git" "ls-remote" "--tags" "--sort=-version:refname" url])]
      (if (zero? (:exit result))
-       (->> (str/split-lines (:out result))
-            (remove str/blank?)
-            (remove #(str/includes? % "^{}"))
-            (mapv (fn [line]
-                    (let [[sha ref] (str/split line #"\t" 2)
-                          tag (str/replace ref "refs/tags/" "")]
-                      {:tag tag :sha sha :sha-short (subs sha 0 7)}))))
+       (v/parse-ls-remote-tags (:out result))
        (throw (ex-info "git ls-remote failed" {:exit (:exit result)}))))))
 
 (defn resolve-lib-tags
@@ -111,6 +106,31 @@
                            {:group group :artifact artifact})))
        (throw (ex-info "Gitea HTTP error" {:status (:status resp)}))))))
 
+(defn maven-cache-dir
+  "Local Maven repository used for cached remote metadata. M2_REPO overrides
+   ~/.m2/repository."
+  []
+  (or (System/getenv "M2_REPO")
+      (str (fs/path (System/getProperty "user.home") ".m2" "repository"))))
+
+(defn resolve-cached-maven-latest
+  "Resolve latest version from Maven's cached REMOTE metadata.
+   Ignores maven-metadata-local.xml so locally installed/deployed-only versions
+   cannot masquerade as published artifacts. Returns Result<string>."
+  [group artifact allow-pre?]
+  (r/try-effect*
+   :io/maven-cache
+   (let [artifact-dir (fs/path (maven-cache-dir) (v/group-id->path group) artifact)
+         metadata-files (when (fs/directory? artifact-dir)
+                          (->> (fs/glob artifact-dir "maven-metadata-*.xml")
+                               (remove #(= "maven-metadata-local.xml" (str (fs/file-name %))))))
+         versions (->> metadata-files
+                       (mapcat #(v/parse-maven-metadata-versions (slurp (str %))))
+                       (filter #(or allow-pre? (not (v/pre-release? %)))))]
+     (or (last (sort v/version-compare versions))
+         (throw (ex-info "No cached remote Maven metadata version"
+                         {:group group :artifact artifact}))))))
+
 (defn resolve-clojars-versions
   "Every version Clojars lists for the artifact. Returns Result<#{string}>."
   [group-id artifact-id]
@@ -173,8 +193,9 @@
   "Resolve latest PUBLISHED version across registries. Returns Result<string>.
 
    Always consults Clojars (falling back to Maven Central). When MAVEN_URL is
-   set, ALSO consults the private Gitea Maven registry, returning the NEWEST
-   version across whichever sources succeed (compared via version-compare).
+   set, ALSO consults the private Gitea Maven registry plus Maven's cached
+   remote metadata, returning the NEWEST version across whichever sources
+   succeed (compared via version-compare).
    Filters pre-releases unless allow-pre? is true. Errs when no source yields
    an acceptable published version."
   [lib-sym allow-pre?]
@@ -186,7 +207,8 @@
                               (if (r/ok? clojars)
                                 clojars
                                 (resolve-maven-latest group artifact)))]
-                     gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)))
+                     gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)
+                                      (resolve-cached-maven-latest group artifact allow-pre?)))
         versions (->> candidates
                       (filter r/ok?)
                       (map :ok)
