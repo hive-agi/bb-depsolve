@@ -6,7 +6,7 @@
 
    First run creates golden EDN files. Subsequent runs compare.
    UPDATE_GOLDEN=true regenerates all snapshots."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [hive-test.golden :as golden]))
 

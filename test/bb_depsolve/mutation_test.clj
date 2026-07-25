@@ -1,5 +1,5 @@
 (ns bb-depsolve.mutation-test
-  "Mutation tests for bb-depsolve.version critical pure functions.
+  "Mutation tests for bb-depsolve.version.api critical pure functions.
 
    Verifies that unit tests catch common classes of bugs by running
    assertions against intentionally broken (mutant) implementations.
@@ -7,7 +7,7 @@
 
    Uses hive-test.mutation macros: Phase 1 runs with real impl (must pass),
    Phase 2 rebinds var to mutant (must fail)."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [clojure.test :refer [is]]
             [hive-test.mutation :as mut]))
 
@@ -16,7 +16,7 @@
 ;; =============================================================================
 
 (mut/deftest-mutations version-newer?-mutations-caught
-  bb-depsolve.version/version-newer?
+  bb-depsolve.version.api/version-newer?
   [["always-true"
     (fn [_old _new] true)]
 
@@ -59,7 +59,7 @@
 ;; =============================================================================
 
 (mut/deftest-mutations parse-semver-mutations-caught
-  bb-depsolve.version/parse-semver
+  bb-depsolve.version.api/parse-semver
   [["swap-major-minor"
     (fn [tag]
       ;; Swaps major and minor components
@@ -96,7 +96,7 @@
 ;; =============================================================================
 
 (mut/deftest-mutations find-conflicts-mutations-caught
-  bb-depsolve.version/find-conflicts
+  bb-depsolve.version.api/find-conflicts
   [["always-empty"
     (fn [_trees] {})]
 
@@ -144,7 +144,7 @@
 ;; =============================================================================
 
 (mut/deftest-mutations maven-property?-mutations-caught
-  bb-depsolve.version/maven-property?
+  bb-depsolve.version.api/maven-property?
   [["always-true"
     (fn [_s] true)]
 

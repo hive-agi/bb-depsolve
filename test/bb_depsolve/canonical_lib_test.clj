@@ -7,7 +7,7 @@
    generated local.deps.edn and the rewritten deps.edn must therefore agree on
    the symbol, which is what canonical-lib guarantees."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]))
+            [bb-depsolve.version.api :as v]))
 
 (deftest canonicalizes-bare-artifact-coordinates
   (testing "artifact/artifact + sibling path -> forge-qualified coordinate"

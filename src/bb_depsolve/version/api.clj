@@ -1,6 +1,6 @@
-(ns bb-depsolve.version
+(ns bb-depsolve.version.api
   "Facade over the version submodules. Re-exports only."
-  (:require [bb-depsolve.schema]
+  (:require [bb-depsolve.schema.api]
             [bb-depsolve.version.lib :as lib]
             [bb-depsolve.version.maven :as maven]
             [bb-depsolve.version.parse :as parse]

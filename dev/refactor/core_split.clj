@@ -1,5 +1,5 @@
 (ns refactor.core-split
-  "Split spec for bb-depsolve.core (1048 LOC) — plan-20260724-depsolve-srp
+  "Split spec for bb-depsolve.core.api (1048 LOC) — plan-20260724-depsolve-srp
    steps 9 through 14.")
 
 (def owner
@@ -34,13 +34,13 @@
     tree-cmd :tree})
 
 (def ui-vars
-  "The bb-depsolve.ui re-export block core.clj carried. Submodules reach these
+  "The bb-depsolve.cli.ui re-export block core.clj carried. Submodules reach these
    through the ui alias instead."
   '[c gum-table gum-filter pad-right visible-len matrix->csv tty? colors
     format-local-dep-warning])
 
 (def spec
-  {:base-ns "bb-depsolve.core"
+  {:base-ns "bb-depsolve.core.api"
    :source-file "src/bb_depsolve/core.clj"
    :source-dir "src/bb_depsolve/core"
    :facade-doc "Facade over the core submodules. Re-exports only."
@@ -53,13 +53,13 @@
    :drop-forms ui-vars
 
    ;; visible-len, tty? and colors had no callers; dropping them also removes
-   ;; core.clj's reach into the private bb-depsolve.ui/colors.
-   :extra-exports '[[c "bb-depsolve.ui"]
-                    [gum-table "bb-depsolve.ui"]
-                    [gum-filter "bb-depsolve.ui"]
-                    [pad-right "bb-depsolve.ui"]
-                    [matrix->csv "bb-depsolve.ui"]
-                    [format-local-dep-warning "bb-depsolve.ui"]]
+   ;; core.clj's reach into the private bb-depsolve.cli.ui/colors.
+   :extra-exports '[[c "bb-depsolve.cli.ui"]
+                    [gum-table "bb-depsolve.cli.ui"]
+                    [gum-filter "bb-depsolve.cli.ui"]
+                    [pad-right "bb-depsolve.cli.ui"]
+                    [matrix->csv "bb-depsolve.cli.ui"]
+                    [format-local-dep-warning "bb-depsolve.cli.ui"]]
 
    ;; Reached from a sibling module, so they cannot stay private.
    :promote-public '#{github-url fetch-git-deps-edn}
@@ -73,9 +73,9 @@
                    ["ba" "[hive-dsl.bounded-atom :as ba]"]
                    ["gate" "[hive-dsl.gate :as gate]"]
                    ["r" "[hive-dsl.result :as r]"]
-                   ["v" "[bb-depsolve.version :as v]"]
-                   ["ui" "[bb-depsolve.ui :as ui]"]
-                   ["sch" "[bb-depsolve.schema :as sch]"]]
+                   ["v" "[bb-depsolve.version.api :as v]"]
+                   ["ui" "[bb-depsolve.cli.ui :as ui]"]
+                   ["sch" "[bb-depsolve.schema.api :as sch]"]]
 
    :module-doc
    {:git "Git process helpers: status, commits-ahead, workspace auto-commit."

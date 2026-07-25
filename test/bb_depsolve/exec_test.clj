@@ -1,10 +1,10 @@
 (ns bb-depsolve.exec-test
   "Tests for bb-depsolve.exec."
-  (:require [bb-depsolve.cascade :as cas]
+  (:require [bb-depsolve.cascade.plan :as cas]
             [bb-depsolve.cascade-test :as ct]
-            [bb-depsolve.exec :as exec]
-            [bb-depsolve.graph :as g]
-            [bb-depsolve.port :as p]
+            [bb-depsolve.release.exec :as exec]
+            [bb-depsolve.graph.dag :as g]
+            [bb-depsolve.release.port :as p]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [clojure.test.check.clojure-test :refer [defspec]]

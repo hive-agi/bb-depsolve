@@ -3,9 +3,9 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [hive-dsl.result :as r]
-            [bb-depsolve.version :as v]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.schema :as sch]
+            [bb-depsolve.version.api :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.schema.api :as sch]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]
             [bb-depsolve.core.resolve :as resolve]
@@ -96,7 +96,7 @@
 (defn compute-sync-changes
   "Compute sync changes between dep files and resolved lib versions.
    Covers both git coords (:git/tag+:git/sha) and maven coords (:mvn/version).
-   Pure calculation delegated to bb-depsolve.version/sync-changes-in-content.
+   Pure calculation delegated to bb-depsolve.version.api/sync-changes-in-content.
    Each change map carries :coord (:git or :mvn) plus :path/:project.
    Output is schema-validated at this boundary (fail-loud)."
   [dep-files resolved]

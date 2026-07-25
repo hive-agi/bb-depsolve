@@ -2,7 +2,7 @@
   "Split spec for test/bb_depsolve/core_test.clj — plan-20260724-depsolve-srp
    step 15.
 
-   The file is named for bb-depsolve.core but its own docstring says
+   The file is named for bb-depsolve.core.api but its own docstring says
    \"version.clj layer\", and all 38 deftests exercise version functions. It
    therefore lands beside the version submodule suites, not the core tree.")
 
@@ -52,14 +52,14 @@
     resolve-versions-test :tree-test})
 
 (def spec
-  {:base-ns "bb-depsolve.version"
+  {:base-ns "bb-depsolve.version.api"
    :source-file "test/bb_depsolve/core_test.clj"
    :source-dir "test/bb_depsolve/version"
    :facade? false
    :owner owner
    :external {}
    :always-requires ["[clojure.test :refer [deftest is testing]]"
-                     "[bb-depsolve.version :as v]"]
+                     "[bb-depsolve.version.api :as v]"]
    :base-requires [["str" "[clojure.string :as str]"]]
    :module-doc
    {:semver-test "Unit tests for semver arithmetic."

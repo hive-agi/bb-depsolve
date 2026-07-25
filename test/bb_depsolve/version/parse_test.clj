@@ -1,7 +1,7 @@
 (ns bb-depsolve.version.parse-test
   "Unit tests for dependency extraction."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]))
+            [bb-depsolve.version.api :as v]))
 
 (deftest find-git-deps-test
   (testing "parses git deps from edn content"

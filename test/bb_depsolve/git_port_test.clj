@@ -1,9 +1,9 @@
 (ns bb-depsolve.git-port-test
-  "Tests for bb-depsolve.git-port against throwaway local repos."
+  "Tests for bb-depsolve.release.git-port against throwaway local repos."
   (:require [babashka.fs :as fs]
             [bb-depsolve.core.git :as git]
-            [bb-depsolve.git-port :as gp]
-            [bb-depsolve.port :as p]
+            [bb-depsolve.release.git-port :as gp]
+            [bb-depsolve.release.port :as p]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 

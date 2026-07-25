@@ -1,4 +1,4 @@
-(ns bb-depsolve.cascade
+(ns bb-depsolve.cascade.plan
   "Transitive release planning over the internal dependency DAG.
 
    Pipeline layer: turns a seed set plus a graph into a release PLAN VALUE.
@@ -23,8 +23,8 @@
    await:
      {:mode :wait|:skip :timeout-ms n
       :libs [{:lib :newer-than :expect}]}"
-  (:require [bb-depsolve.graph :as graph]
-            [bb-depsolve.version :as v]
+  (:require [bb-depsolve.graph.dag :as graph]
+            [bb-depsolve.version.api :as v]
             [bb-depsolve.cascade.bump :as bump]))
 
 (def default-await-timeout-ms

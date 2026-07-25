@@ -2,7 +2,7 @@
   "Git process helpers: status, commits-ahead, workspace auto-commit."
   (:require [babashka.fs :as fs]
             [babashka.process :as proc]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cli.ui :as ui]
             [clojure.string :as str]))
 
 (defn git

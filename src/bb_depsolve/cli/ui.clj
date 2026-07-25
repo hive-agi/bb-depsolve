@@ -1,4 +1,4 @@
-(ns bb-depsolve.ui
+(ns bb-depsolve.cli.ui
   (:require [clojure.string :as str]
             [babashka.process :as proc]
             [bblgum.core :as gum]))

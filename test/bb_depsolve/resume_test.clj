@@ -1,11 +1,11 @@
 (ns bb-depsolve.resume-test
-  "Tests for bb-depsolve.resume and the interpreter's resume seam."
+  "Tests for bb-depsolve.release.resume and the interpreter's resume seam."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.cascade :as cas]
-            [bb-depsolve.exec :as exec]
-            [bb-depsolve.graph :as g]
-            [bb-depsolve.port :as p]
-            [bb-depsolve.resume :as resume]
+            [bb-depsolve.cascade.plan :as cas]
+            [bb-depsolve.release.exec :as exec]
+            [bb-depsolve.graph.dag :as g]
+            [bb-depsolve.release.port :as p]
+            [bb-depsolve.release.resume :as resume]
             [clojure.test :refer [deftest is testing]]))
 
 ;; =============================================================================

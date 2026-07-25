@@ -1,7 +1,7 @@
 (ns bb-depsolve.await-test
   "Tests for bb-depsolve.await."
-  (:require [bb-depsolve.await :as aw]
-            [bb-depsolve.port :as p]
+  (:require [bb-depsolve.release.await :as aw]
+            [bb-depsolve.release.port :as p]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [clojure.test.check.clojure-test :refer [defspec]]

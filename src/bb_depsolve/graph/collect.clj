@@ -1,15 +1,15 @@
-(ns bb-depsolve.collect
+(ns bb-depsolve.graph.collect
   "Workspace collectors for the internal dependency graph.
 
    Collect layer: reads version.edn, VERSION and dep files from disk and shells
-   out to git. Produces the plain data bb-depsolve.graph consumes; performs no
+   out to git. Produces the plain data bb-depsolve.graph.dag consumes; performs no
    analysis of its own."
   (:require [babashka.fs :as fs]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]
-            [bb-depsolve.graph :as graph]
-            [bb-depsolve.schema :as sch]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.graph.dag :as graph]
+            [bb-depsolve.schema.api :as sch]
+            [bb-depsolve.version.api :as v]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 

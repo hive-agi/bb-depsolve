@@ -1,7 +1,7 @@
 (ns bb-depsolve.version.tree-test
   "Unit tests for dependency trees."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]))
 
 (deftest build-dep-tree-test

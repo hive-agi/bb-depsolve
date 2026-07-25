@@ -8,8 +8,8 @@
             [hive-schemas.schema :as hs]
             [hive-test.mutation :as mut]
             [hive-test.mutation.combinators :as mc]
-            [bb-depsolve.schema :as sch]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.schema.api :as sch]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [clojure.test.check.generators :as gen]
             [bb-depsolve.schema.exec :as sx]))
@@ -142,7 +142,7 @@
       (is (every? #(contains? resolved (:lib %)) mvn-changes)))))
 
 (mut/deftest-mutations sync-changes-mutations-caught
-  bb-depsolve.version/sync-changes-in-content
+  bb-depsolve.version.api/sync-changes-in-content
   [(mc/always [])
    (mc/echo-arg 0)]
   sync-change-assertions)

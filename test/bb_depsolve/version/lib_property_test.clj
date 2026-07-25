@@ -1,6 +1,6 @@
 (ns bb-depsolve.version.lib-property-test
   "Property tests for lib identity and coordinate naming."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]

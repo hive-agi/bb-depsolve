@@ -10,7 +10,7 @@
         io.github.hive-agi/hive-spi {:git/tag "v0.1.9" :git/sha "3c468c4"}
         io.github.hive-agi/hive-schemas {:mvn/version "0.1.10"}
         io.github.hive-agi/hive-weave {:mvn/version "0.3.1"}}
- :bbin/bin {bb-depsolve {:main-opts ["-m" "bb-depsolve.cli"]}}
+ :bbin/bin {bb-depsolve {:main-opts ["-m" "bb-depsolve.cli.main"]}}
  :tasks
  {test {:extra-paths ["test"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}

@@ -4,9 +4,9 @@
             [clojure.string :as str]
             [hive-dsl.gate :as gate]
             [hive-dsl.result :as r]
-            [bb-depsolve.version :as v]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.schema :as sch]
+            [bb-depsolve.version.api :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.schema.api :as sch]
             [bb-depsolve.core.auth :as auth]))
 
 (def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
@@ -54,7 +54,7 @@
 (defn fetch-pom-deps
   "Fetch and parse POM for a Maven artifact. Tries Clojars then Maven Central.
    Filters out coords whose key fields still contain `${...}` placeholders
-   AFTER POM parsing (see bb-depsolve.version/filter-resolved-coords). Dropped
+   AFTER POM parsing (see bb-depsolve.version.api/filter-resolved-coords). Dropped
    coords are logged via `warn-unresolved-coord` (not silently swallowed).
    Returns Result<[{:lib :version}]>, schema-validated at this boundary
    (fail-loud)."
@@ -73,7 +73,7 @@
 
 (defn fetch-git-deps-edn
   "Fetch raw deps.edn content from a forge. Returns Result<string>.
-   Uses bb-depsolve.version/forge-raw-url to pick the per-forge URL shape and
+   Uses bb-depsolve.version.api/forge-raw-url to pick the per-forge URL shape and
    bb-depsolve.core.auth/auth-headers to attach private-registry creds."
   ([org repo tag]
    (fetch-git-deps-edn :github org repo tag))

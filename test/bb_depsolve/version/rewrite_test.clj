@@ -1,7 +1,7 @@
 (ns bb-depsolve.version.rewrite-test
   "Unit tests for dependency rewriting."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]))
 
 (deftest update-shadow-dep-test

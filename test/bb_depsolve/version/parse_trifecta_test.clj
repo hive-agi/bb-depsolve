@@ -5,7 +5,7 @@
    answer is a broken dependency for every consumer. The mutation facet pins
    the specific regression: an implementation that ignores the peeled `^{}`
    commit of an annotated tag."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [clojure.test.check.generators :as gen]
             [hive-test.trifecta :as tri]))
@@ -62,7 +62,7 @@
 ;; =============================================================================
 
 (tri/deftrifecta parse-ls-remote-tags-trifecta
-  bb-depsolve.version/parse-ls-remote-tags
+  bb-depsolve.version.api/parse-ls-remote-tags
   {:golden-path "test/golden/bb-depsolve/parse-ls-remote-tags.edn"
    :cases       {:annotated    annotated-remote
                  :peeled-first peeled-first-remote
@@ -103,7 +103,7 @@
 ;; =============================================================================
 
 (tri/deftrifecta parse-local-tag-output-trifecta
-  bb-depsolve.version/parse-local-tag-output
+  bb-depsolve.version.api/parse-local-tag-output
   {:golden-path "test/golden/bb-depsolve/parse-local-tag-output.edn"
    :cases       {:mixed local-mixed
                  :empty ""

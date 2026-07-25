@@ -1,10 +1,10 @@
-(ns bb-depsolve.await
+(ns bb-depsolve.release.await
   "Polling a wave's artifacts until they publish.
 
    entry {:lib :newer-than :expect :state}
    state :pending | :resolved | :unreachable"
-  (:require [bb-depsolve.port :as port]
-            [bb-depsolve.ui :as ui]
+  (:require [bb-depsolve.release.port :as port]
+            [bb-depsolve.cli.ui :as ui]
             [hive-dsl.result :as r]
             [clojure.string :as str]))
 

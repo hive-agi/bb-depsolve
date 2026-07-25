@@ -1,8 +1,8 @@
-(ns bb-depsolve.registry
+(ns bb-depsolve.registry.live
   "IArtifactRegistry over git tags and published maven versions."
   (:require [bb-depsolve.core.resolve :as resolve]
-            [bb-depsolve.port :as port]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.release.port :as port]
+            [bb-depsolve.version.api :as v]
             [hive-dsl.result :as r]
             [bb-depsolve.core.resolve.registries :as registries]))
 

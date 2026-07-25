@@ -1,12 +1,12 @@
 (ns bb-depsolve.release.inspect
   (:require [babashka.fs :as fs]
-            [bb-depsolve.cascade :as cas]
-            [bb-depsolve.collect :as col]
+            [bb-depsolve.cascade.plan :as cas]
+            [bb-depsolve.graph.collect :as col]
             [bb-depsolve.core.discovery :as discovery]
-            [bb-depsolve.graph :as graph]
+            [bb-depsolve.graph.dag :as graph]
             [bb-depsolve.release.opts :as ropts]
             [bb-depsolve.release.render :as render]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cli.ui :as ui]
             [clojure.pprint :as pp]
             [clojure.string :as str]))
 

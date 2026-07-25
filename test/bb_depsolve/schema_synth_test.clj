@@ -5,7 +5,7 @@
 
    Every predicate here guards a contract the sync path depends on, so a
    schema that drifts from its predicate fails here rather than in a release."
-  (:require [bb-depsolve.schema :as sch]
+  (:require [bb-depsolve.schema.api :as sch]
             [clojure.test :refer [deftest is]]
             [hive-schemas.schema :as hs]
             [hive-schemas.test :as hst]))

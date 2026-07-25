@@ -1,5 +1,5 @@
 (ns bb-depsolve.cascade.bump
-  (:require [bb-depsolve.version :as v]))
+  (:require [bb-depsolve.version.api :as v]))
 
 (declare bump-kinds bump-rank default-bump-rules select-bump-kind strongest-bump bump-fn next-version)
 

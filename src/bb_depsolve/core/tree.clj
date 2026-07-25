@@ -3,8 +3,8 @@
   (:require [babashka.fs :as fs]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.resolve :as resolve]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [hive-dsl.bounded-atom :as ba]))
 

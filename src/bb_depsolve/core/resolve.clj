@@ -4,8 +4,8 @@
             [babashka.process :as proc]
             [bb-depsolve.core.auth :as auth]
             [bb-depsolve.core.fetch :as fetch]
-            [bb-depsolve.schema :as sch]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.schema.api :as sch]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [hive-dsl.bounded-atom :as ba]
             [hive-dsl.result :as r]))

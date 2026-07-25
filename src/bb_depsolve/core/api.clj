@@ -1,4 +1,4 @@
-(ns bb-depsolve.core
+(ns bb-depsolve.core.api
   "Facade over the core submodules. Re-exports only."
   (:require [bb-depsolve.core.auth :as auth]
             [bb-depsolve.core.bump :as bump]
@@ -10,7 +10,7 @@
             [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.core.sync :as sync]
             [bb-depsolve.core.tree :as tree]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.core.upgrade :as upgrade]
             [bb-depsolve.core.resolve.registries :as registries]))
 

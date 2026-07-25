@@ -1,7 +1,7 @@
 (ns bb-depsolve.forge-test
   "Unit tests for multi-forge support and major-bump detection (v0.8.0)."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]))
+            [bb-depsolve.version.api :as v]))
 
 (deftest parse-forge-lib-test
   (testing "parses GitHub libs"

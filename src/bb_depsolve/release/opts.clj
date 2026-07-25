@@ -1,7 +1,7 @@
 (ns bb-depsolve.release.opts
   (:require [bb-depsolve.core.bump :as bump]
             [bb-depsolve.core.discovery :as discovery]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cli.ui :as ui]
             [clojure.string :as str]))
 
 (declare skip-set requested-bump parse-seeds require-org!)

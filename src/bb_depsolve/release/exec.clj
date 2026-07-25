@@ -1,16 +1,16 @@
-(ns bb-depsolve.exec
+(ns bb-depsolve.release.exec
   "Interpreting a cascade plan wave by wave.
 
    step-outcome {:project :status :version :tag :pin-updates :error}
    status       :released | :sync-failed | :release-failed
    run          {:status :waves [{:index :steps :await}] :released {project version}}"
-  (:require [bb-depsolve.await :as await]
-            [bb-depsolve.cascade :as cascade]
-            [bb-depsolve.port :as port]
-            [bb-depsolve.ui :as ui]
+  (:require [bb-depsolve.release.await :as await]
+            [bb-depsolve.cascade.plan :as cascade]
+            [bb-depsolve.release.port :as port]
+            [bb-depsolve.cli.ui :as ui]
             [clojure.string :as str]
             [hive-dsl.result :as r]
-            [bb-depsolve.schema :as sch]
+            [bb-depsolve.schema.api :as sch]
             [bb-depsolve.schema.exec :as schema-exec]))
 
 (defn preflight

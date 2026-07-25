@@ -2,7 +2,7 @@
   "Semver arithmetic: parsing, ordering, bumping, tag/version formatting."
   (:require [clojure.string :as str]
             [malli.core :as m]
-            [bb-depsolve.schema]))
+            [bb-depsolve.schema.api]))
 
 (defn parse-semver
   "Parse a semver tag like 'v0.4.0' into [major minor patch].

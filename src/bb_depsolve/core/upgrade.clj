@@ -4,8 +4,8 @@
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]
             [bb-depsolve.core.resolve.registries :as registries]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [hive-dsl.result :as r]))
 

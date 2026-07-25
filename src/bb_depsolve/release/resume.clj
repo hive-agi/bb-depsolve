@@ -1,4 +1,4 @@
-(ns bb-depsolve.resume
+(ns bb-depsolve.release.resume
   "Checkpoint for an interrupted cascade.
 
    A cascade is not atomic: by the time a later wave fails, earlier waves are

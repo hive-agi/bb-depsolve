@@ -1,4 +1,4 @@
-(ns bb-depsolve.reconcile
+(ns bb-depsolve.release.reconcile
   "Reconcile VERSION files that lag the versions already evidenced elsewhere.
 
    A project's VERSION can fall behind what it has actually released: its own
@@ -8,9 +8,9 @@
 
    drift {:project :declared :highest :from-tags :from-pins}"
   (:require [babashka.fs :as fs]
-            [bb-depsolve.cascade :as cas]
+            [bb-depsolve.cascade.plan :as cas]
             [bb-depsolve.core.resolve :as resolve]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [hive-dsl.result :as r]))
 

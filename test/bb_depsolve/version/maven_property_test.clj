@@ -1,6 +1,6 @@
 (ns bb-depsolve.version.maven-property-test
   "Property tests for Maven metadata and POM handling."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [bb-depsolve.version.generators :as g]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]

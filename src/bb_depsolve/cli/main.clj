@@ -1,15 +1,15 @@
-(ns bb-depsolve.cli
+(ns bb-depsolve.cli.main
   "CLI entry point for bb-depsolve.
    Dispatches to core commands via babashka.cli."
   (:require [babashka.cli :as cli]
-            [bb-depsolve.audit :as audit]
+            [bb-depsolve.audit.osv :as audit]
             [bb-depsolve.core.bump :as bump]
             [bb-depsolve.core.lint :as lint]
             [bb-depsolve.core.report :as report]
             [bb-depsolve.core.sync :as sync]
             [bb-depsolve.core.upgrade :as upgrade]
-            [bb-depsolve.release :as release]
-            [bb-depsolve.wave :as wave]
+            [bb-depsolve.release.run :as release]
+            [bb-depsolve.wave.commands :as wave]
             [bb-depsolve.core.tree :as tree]
             [bb-depsolve.wave.deep-lint :as deep-lint]
             [bb-depsolve.wave.lock :as lock]

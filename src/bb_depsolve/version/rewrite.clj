@@ -1,6 +1,6 @@
 (ns bb-depsolve.version.rewrite
   "Dependency coordinate rewriting in dep-file content. Pure."
-  (:require [bb-depsolve.schema]
+  (:require [bb-depsolve.schema.api]
             [bb-depsolve.version.parse :as parse]
             [clojure.string :as str]
             [malli.core :as m]))

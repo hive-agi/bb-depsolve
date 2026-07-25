@@ -4,8 +4,8 @@
             [babashka.process :as proc]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.sync :as sync]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]))
 
 (defn find-consumers

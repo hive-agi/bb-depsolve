@@ -1,7 +1,7 @@
 (ns bb-depsolve.audit-test
   "Tests for the OSV.dev vulnerability query boundary."
   (:require [babashka.http-client :as http]
-            [bb-depsolve.audit :as audit]
+            [bb-depsolve.audit.osv :as audit]
             [cheshire.core :as json]
             [clojure.test :refer [deftest is]]))
 

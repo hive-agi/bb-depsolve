@@ -1,16 +1,16 @@
-(ns bb-depsolve.audit
+(ns bb-depsolve.audit.osv
   "CVE audit via OSV.dev (Maven ecosystem).
 
    Layer 2 (Action): HTTP I/O to OSV.dev, orchestrates Maven dep collection
    (direct + transitive) and vulnerability reporting.
 
-   Pure vulnerability parsing / sorting lives in `bb-depsolve.version`.
-   Dep-file discovery / transitive resolution lives in `bb-depsolve.core`."
+   Pure vulnerability parsing / sorting lives in `bb-depsolve.version.api`.
+   Dep-file discovery / transitive resolution lives in `bb-depsolve.core.api`."
   (:require [babashka.http-client :as http]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.resolve :as resolve]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.version.api :as v]
             [cheshire.core :as json]
             [clojure.string :as str]
             [hive-dsl.bounded-atom :as ba]

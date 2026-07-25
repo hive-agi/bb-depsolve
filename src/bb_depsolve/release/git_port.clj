@@ -1,11 +1,11 @@
-(ns bb-depsolve.git-port
+(ns bb-depsolve.release.git-port
   "IReleasePort over the working tree."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.collect :as collect]
+            [bb-depsolve.graph.collect :as collect]
             [bb-depsolve.core.git :as git]
             [bb-depsolve.core.resolve :as resolve]
-            [bb-depsolve.port :as port]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.release.port :as port]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]
             [hive-dsl.result :as r]))
 

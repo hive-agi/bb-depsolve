@@ -52,4 +52,11 @@
     (let [counts (line-counts guarded-roots)]
       (is (< 40 (count counts))
           "expected the glob to find the whole workspace")
-      (is (some #(str/ends-with? (:path %) "src/bb_depsolve/version.clj") counts)))))
+      (is (some #(str/ends-with? (:path %) "src/bb_depsolve/version/api.clj") counts)))))
+
+(deftest every-namespace-lives-in-an-area-folder-test
+  (testing "src/bb_depsolve holds folders, not loose namespaces"
+    (let [flat (mapv str (fs/glob "src/bb_depsolve" "*.clj"))]
+      (is (empty? flat)
+          (str "namespaces sitting directly in the source root — move each one "
+               "into the area that owns it:\n  " (str/join "\n  " flat))))))

@@ -2,7 +2,7 @@
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
             [bb-depsolve.core.auth :as auth]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.version.api :as v]
             [cheshire.core :as json]
             [clojure.string :as str]
             [hive-dsl.result :as r]))

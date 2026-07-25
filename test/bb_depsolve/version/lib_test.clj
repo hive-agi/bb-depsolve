@@ -1,7 +1,7 @@
 (ns bb-depsolve.version.lib-test
   "Unit tests for lib identity and coordinate naming."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]))
+            [bb-depsolve.version.api :as v]))
 
 (deftest parse-github-lib-test
   (testing "parses github lib coords"

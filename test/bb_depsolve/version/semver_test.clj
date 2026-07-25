@@ -1,7 +1,7 @@
 (ns bb-depsolve.version.semver-test
   "Unit tests for semver arithmetic."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]))
+            [bb-depsolve.version.api :as v]))
 
 (deftest parse-semver-test
   (testing "standard semver with v prefix"

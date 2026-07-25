@@ -1,7 +1,7 @@
 (ns bb-depsolve.sync-model
   "recife (TLA+/TLC) model of the sync operator: a workspace of N libs, each
    step syncs one drifted lib to its resolved version. Mirrors the semantics
-   of bb-depsolve.version/sync-changes-in-content — drift is ANY difference
+   of bb-depsolve.version.api/sync-changes-in-content — drift is ANY difference
    from resolved, and applying a change pins current := resolved.
 
    Invariants:

@@ -1,8 +1,8 @@
 (ns bb-depsolve.reconcile-test
   "Tests for bb-depsolve.reconcile."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.graph :as g]
-            [bb-depsolve.reconcile :as rec]
+            [bb-depsolve.graph.dag :as g]
+            [bb-depsolve.release.reconcile :as rec]
             [clojure.test :refer [deftest is testing]]))
 
 ;; =============================================================================

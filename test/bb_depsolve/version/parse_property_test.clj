@@ -1,6 +1,6 @@
 (ns bb-depsolve.version.parse-property-test
   "Property tests for dependency extraction."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [bb-depsolve.version.generators :as g]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]

@@ -1,4 +1,4 @@
-(ns bb-depsolve.graph
+(ns bb-depsolve.graph.dag
   "Pure calculations over the workspace-internal dependency DAG.
 
    Calculation layer: total functions over plain data. No IO.

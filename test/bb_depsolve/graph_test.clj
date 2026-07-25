@@ -1,10 +1,10 @@
 (ns bb-depsolve.graph-test
-  "Unit and property tests for bb-depsolve.graph (pure Calculation layer).
+  "Unit and property tests for bb-depsolve.graph.dag (pure Calculation layer).
 
    The properties are the ordering contract the cascade planner relies on:
    waves are topologically sound, they partition the graph with the cyclic
    residue, and the downstream closure is upward-closed."
-  (:require [bb-depsolve.graph :as g]
+  (:require [bb-depsolve.graph.dag :as g]
             [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [clojure.test.check.clojure-test :refer [defspec]]

@@ -1,6 +1,6 @@
 (ns bb-depsolve.wave.help
   "CLI help text."
-  (:require [bb-depsolve.ui :as ui]
+  (:require [bb-depsolve.cli.ui :as ui]
             [clojure.string :as str]))
 
 (defn help-cmd

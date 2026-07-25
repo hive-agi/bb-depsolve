@@ -19,11 +19,11 @@ Add to your `bb.edn`:
 ```clojure
 {:deps {io.github.hive-agi/bb-depsolve {:local/root "bb-depsolve"}}
  :tasks
- {sync {:task (exec 'bb-depsolve.cli/-main) :extra-args ["sync" "--org" "your-org"]}
-  upgrade {:task (exec 'bb-depsolve.cli/-main) :extra-args ["upgrade"]}
-  lint {:task (exec 'bb-depsolve.cli/-main) :extra-args ["lint"]}
-  bump {:task (exec 'bb-depsolve.cli/-main) :extra-args ["bump"]}
-  deps-report {:task (exec 'bb-depsolve.cli/-main) :extra-args ["report"]}}}
+ {sync {:task (exec 'bb-depsolve.cli.main/-main) :extra-args ["sync" "--org" "your-org"]}
+  upgrade {:task (exec 'bb-depsolve.cli.main/-main) :extra-args ["upgrade"]}
+  lint {:task (exec 'bb-depsolve.cli.main/-main) :extra-args ["lint"]}
+  bump {:task (exec 'bb-depsolve.cli.main/-main) :extra-args ["bump"]}
+  deps-report {:task (exec 'bb-depsolve.cli.main/-main) :extra-args ["report"]}}}
 ```
 
 ## Commands
@@ -37,8 +37,8 @@ Handles both coordinate styles:
 - `:mvn/version` — version is updated to the latest tag (without the `v` prefix)
 
 ```bash
-bb -m bb-depsolve.cli sync --root . --org hive-agi
-bb -m bb-depsolve.cli sync --root . --org hive-agi --apply  # write changes
+bb -m bb-depsolve.cli.main sync --root . --org hive-agi
+bb -m bb-depsolve.cli.main sync --root . --org hive-agi --apply  # write changes
 ```
 
 ### `upgrade` — Upgrade mvn dependencies
@@ -46,9 +46,9 @@ bb -m bb-depsolve.cli sync --root . --org hive-agi --apply  # write changes
 Checks Clojars and Maven Central for newer versions of all `:mvn/version` deps.
 
 ```bash
-bb -m bb-depsolve.cli upgrade --root .
-bb -m bb-depsolve.cli upgrade --root . --apply         # interactive selection
-bb -m bb-depsolve.cli upgrade --root . --pre-release    # include alpha/beta/rc
+bb -m bb-depsolve.cli.main upgrade --root .
+bb -m bb-depsolve.cli.main upgrade --root . --apply         # interactive selection
+bb -m bb-depsolve.cli.main upgrade --root . --pre-release    # include alpha/beta/rc
 ```
 
 ### `lint` — Detect dep anti-patterns

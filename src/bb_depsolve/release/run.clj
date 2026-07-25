@@ -1,20 +1,20 @@
-(ns bb-depsolve.release
+(ns bb-depsolve.release.run
   "Coordinated-release commands over the internal dependency DAG.
 
    Boundary layer: collects the workspace, delegates every decision to the
-   pure bb-depsolve.graph and bb-depsolve.cascade calculations, and renders
+   pure bb-depsolve.graph.dag and bb-depsolve.cascade.plan calculations, and renders
    the result. Writes nothing."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.cascade :as cas]
-            [bb-depsolve.collect :as col]
-            [bb-depsolve.exec :as exec]
-            [bb-depsolve.git-port :as git-port]
-            [bb-depsolve.reconcile :as reconcile]
-            [bb-depsolve.registry :as registry]
+            [bb-depsolve.cascade.plan :as cas]
+            [bb-depsolve.graph.collect :as col]
+            [bb-depsolve.release.exec :as exec]
+            [bb-depsolve.release.git-port :as git-port]
+            [bb-depsolve.release.reconcile :as reconcile]
+            [bb-depsolve.registry.live :as registry]
             [bb-depsolve.release.opts :as ropts]
             [bb-depsolve.release.render :as render]
-            [bb-depsolve.resume :as resume]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.release.resume :as resume]
+            [bb-depsolve.cli.ui :as ui]
             [clojure.pprint :as pp]
             [clojure.string :as str]))
 

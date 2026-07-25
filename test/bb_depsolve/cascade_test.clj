@@ -1,14 +1,14 @@
 (ns bb-depsolve.cascade-test
-  "Unit and property tests for bb-depsolve.cascade (pure Pipeline layer).
+  "Unit and property tests for bb-depsolve.cascade.plan (pure Pipeline layer).
 
    The properties are the safety contract of a release plan: it never plans a
    downgrade, it never releases a project before a dependency it must re-pin,
    and it is a deterministic function of its inputs."
-  (:require [bb-depsolve.cascade :as cas]
-            [bb-depsolve.graph :as g]
+  (:require [bb-depsolve.cascade.plan :as cas]
+            [bb-depsolve.graph.dag :as g]
             [bb-depsolve.graph-test :as gt]
-            [bb-depsolve.schema :as sch]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.schema.api :as sch]
+            [bb-depsolve.version.api :as v]
             [clojure.test :refer [deftest is testing]]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]

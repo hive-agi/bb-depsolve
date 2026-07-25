@@ -1,11 +1,11 @@
 (ns bb-depsolve.registry-test
-  "Tests for bb-depsolve.registry — the live IArtifactRegistry.
+  "Tests for bb-depsolve.registry.live — the live IArtifactRegistry.
 
    Both registry sources are stubbed at their owning vars, so no test here
    reaches the network."
   (:require [bb-depsolve.core.resolve :as resolve]
-            [bb-depsolve.port :as port]
-            [bb-depsolve.registry :as reg]
+            [bb-depsolve.release.port :as port]
+            [bb-depsolve.registry.live :as reg]
             [clojure.test :refer [deftest is testing]]
             [hive-dsl.result :as r]
             [bb-depsolve.core.resolve.registries :as registries]))

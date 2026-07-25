@@ -1,6 +1,6 @@
 (ns bb-depsolve.version.tree-property-test
   "Property tests for dependency trees."
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [bb-depsolve.version.generators :as g]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]

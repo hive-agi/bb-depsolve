@@ -2,8 +2,8 @@
   "Deep lint: check the latest tagged release for :local/root pins."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
-            [bb-depsolve.version :as v]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.version.api :as v]
+            [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.fetch :as fetch]
             [bb-depsolve.core.resolve :as resolve]))

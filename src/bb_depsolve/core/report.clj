@@ -1,8 +1,8 @@
 (ns bb-depsolve.core.report
   "The report command: dependency matrix."
   (:require [bb-depsolve.core.discovery :as discovery]
-            [bb-depsolve.ui :as ui]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.cli.ui :as ui]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]))
 
 (defn report-cmd

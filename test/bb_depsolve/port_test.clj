@@ -1,8 +1,8 @@
 (ns bb-depsolve.port-test
   "Tests for bb-depsolve.port."
   (:require [bb-depsolve.cascade-test :as ct]
-            [bb-depsolve.port :as p]
-            [bb-depsolve.schema :as sch]
+            [bb-depsolve.release.port :as p]
+            [bb-depsolve.schema.api :as sch]
             [clojure.test :refer [deftest is testing]]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.properties :as prop]))

@@ -2,7 +2,7 @@
   "Transitive dependency trees: building, conflict detection, resolution."
   (:require [clojure.set :as set]
             [malli.core :as m]
-            [bb-depsolve.schema]
+            [bb-depsolve.schema.api]
             [bb-depsolve.version.semver :as semver]))
 
 (defn build-dep-tree

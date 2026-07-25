@@ -1,9 +1,9 @@
-(ns bb-depsolve.port
+(ns bb-depsolve.release.port
   "Release effects and registry observations.
 
    sync-outcome    {:project :paths #{path} :applied [..] :skipped [..]}
    release-outcome {:project :release-mode :version :tag}"
-  (:require [bb-depsolve.version :as v]
+  (:require [bb-depsolve.version.api :as v]
             [hive-dsl.result :as r]))
 
 (defprotocol IArtifactRegistry

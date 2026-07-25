@@ -1,7 +1,7 @@
 (ns bb-depsolve.cascade-model
   "recife (TLA+/TLC) model of the release cascade: a DAG of libs where a lib
    may only be released once every dependency it re-pins has already been
-   released and published. Mirrors bb-depsolve.exec/run-plan! — release a
+   released and published. Mirrors bb-depsolve.release.exec/run-plan! — release a
    step, await its artifact, then let consumers re-pin.
 
    Invariants:

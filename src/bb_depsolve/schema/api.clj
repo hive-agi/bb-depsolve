@@ -1,8 +1,8 @@
-(ns bb-depsolve.schema
+(ns bb-depsolve.schema.api
   "Domain model as malli schemas, registered into the hive-spi registry.
    Promote layer: raw parsed maps -> validated domain values. Pure data;
-   validation happens at the boundary (bb-depsolve.core), never inside the
-   Calculation layer (bb-depsolve.version)."
+   validation happens at the boundary (bb-depsolve.core.api), never inside the
+   Calculation layer (bb-depsolve.version.api)."
   (:require [hive-schemas.schema :as hs]
             [malli.registry :as mr]))
 

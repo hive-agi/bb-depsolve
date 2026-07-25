@@ -3,7 +3,7 @@
   (:require [clojure.data.xml :as xml]
             [clojure.string :as str]
             [malli.core :as m]
-            [bb-depsolve.schema]
+            [bb-depsolve.schema.api]
             [bb-depsolve.version.lib :as lib]
             [bb-depsolve.version.semver :as semver]))
 

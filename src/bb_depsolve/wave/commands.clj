@@ -1,8 +1,8 @@
-(ns bb-depsolve.wave
+(ns bb-depsolve.wave.commands
   "Workspace-wide release orchestration: bump-wave, push-all, release-wave."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.core.bump :as bump]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]

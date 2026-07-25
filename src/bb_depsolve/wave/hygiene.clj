@@ -2,7 +2,7 @@
   "Workspace repo hygiene: .gitignore entries and default-branch rename."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.core.discovery :as discovery]
             [bb-depsolve.core.git :as git]))
 

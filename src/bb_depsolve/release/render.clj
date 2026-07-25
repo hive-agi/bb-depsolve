@@ -1,10 +1,10 @@
 (ns bb-depsolve.release.render
   "Terminal and dot rendering for the coordinated-release commands."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.cascade :as cas]
-            [bb-depsolve.collect :as col]
-            [bb-depsolve.graph :as graph]
-            [bb-depsolve.ui :as ui]
+            [bb-depsolve.cascade.plan :as cas]
+            [bb-depsolve.graph.collect :as col]
+            [bb-depsolve.graph.dag :as graph]
+            [bb-depsolve.cli.ui :as ui]
             [clojure.string :as str]))
 
 (defn print-cycles

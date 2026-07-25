@@ -1,7 +1,7 @@
 (ns bb-depsolve.version.maven-test
   "Unit tests for Maven metadata and POM handling."
   (:require [clojure.test :refer [deftest is testing]]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]))
 
 (deftest maven-property?-test

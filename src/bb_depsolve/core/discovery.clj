@@ -1,7 +1,7 @@
 (ns bb-depsolve.core.discovery
   "Workspace scanning: dep-file discovery and project layout."
   (:require [babashka.fs :as fs]
-            [bb-depsolve.version :as v]
+            [bb-depsolve.version.api :as v]
             [clojure.string :as str]))
 
 (def default-skip-dirs
