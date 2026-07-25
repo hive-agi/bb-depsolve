@@ -13,6 +13,10 @@
 
 (def default-file-name "depsolve-layers.edn")
 
+(def default-freeze-budget
+  "Releases per window a :frozen? layer may cut before it is reported."
+  4)
+
 (defn index-levels
   "{project -> level-index} over an ordered :layers vector."
   [layers]
@@ -27,15 +31,22 @@
   (mapv :name layers))
 
 (defn parse
-  "Raw table edn -> {:levels {} :names [] :terminal #{} :waivers #{} :reasons {}}.
+  "Raw table edn -> {:levels {} :names [] :terminal #{} :frozen {} :waivers #{}
+   :reasons {}}.
 
    :terminal holds the level indices marked :terminal? — nothing may depend on
-   a project in one. :waivers holds [from to] pairs; :reasons maps that pair
-   to its :reason."
+   a project in one. :frozen maps a level index to its releases-per-window
+   budget, from :frozen? (true means `default-freeze-budget`) or an explicit
+   :max-releases. :waivers holds [from to] pairs; :reasons maps that pair to
+   its :reason."
   [{:keys [layers waivers]}]
   {:levels   (index-levels layers)
    :names    (layer-names layers)
    :terminal (into #{} (keep-indexed (fn [i l] (when (:terminal? l) i))) layers)
+   :frozen   (into {} (keep-indexed (fn [i l]
+                                      (when (or (:frozen? l) (:max-releases l))
+                                        [i (or (:max-releases l) default-freeze-budget)]))
+                                    layers))
    :waivers  (into #{} (map (juxt :from :to)) waivers)
    :reasons  (into {} (map (juxt (juxt :from :to) :reason)) waivers)})
 

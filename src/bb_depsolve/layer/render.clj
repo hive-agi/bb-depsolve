@@ -40,6 +40,27 @@
     (println (ui/c :dim (str "  " (str/join " " unranked))))
     (println)))
 
+(defn print-cadence
+  "Print the frozen-layer release-cadence report. Returns the breach count."
+  [report]
+  (if (empty? report)
+    0
+    (let [over (filterv :over? report)]
+      (println (ui/c :bold "Frozen-layer release cadence:"))
+      (doseq [{:keys [project releases budget window-days over?]} report]
+        (printf "  %-26s %s\n"
+                (ui/c (if over? :red :cyan) project)
+                (ui/c (if over? :red :dim)
+                      (format "%d release(s) in %dd, budget %d"
+                              releases window-days budget))))
+      (println)
+      (when (seq over)
+        (println (ui/c :red
+                       (format "%d frozen project(s) over budget — a contract that churns forces every consumer to re-pin."
+                               (count over))))
+        (println))
+      (count over))))
+
 (defn print-result
   "Print a full layer check result. Returns the violation count."
   [table {:keys [violations summary unranked]}]
