@@ -7,7 +7,7 @@
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
         io.github.hive-agi/hive-dsl {:mvn/version "0.5.8"}
         metosin/malli {:mvn/version "0.20.1"}
-        io.github.hive-agi/hive-spi {:git/tag "v0.1.9" :git/sha "3c468c4"}
+        io.github.hive-agi/hive-spi {:mvn/version "0.1.9"}
         io.github.hive-agi/hive-schemas {:mvn/version "0.1.10"}
         io.github.hive-agi/hive-weave {:mvn/version "0.3.1"}
         org.clojure/data.xml {:mvn/version "0.2.0-alpha9"}}
@@ -29,7 +29,7 @@
  :extra-deps {org.clojure/clojure {:mvn/version "1.12.1"}
               pfeodrippe/recife {:mvn/version "0.22.0"}
               io.github.hive-agi/hive-recife {:git/tag "v0.1.4" :git/sha "a77a70f"}
-              io.github.hive-agi/hive-spi {:git/tag "v0.1.9" :git/sha "3c468c4"}}
+              io.github.hive-agi/hive-spi {:mvn/version "0.1.9"}}
  :main-opts ["-m" "bb-depsolve.sync-model"]}
   :dev {:extra-paths ["dev" "test"]
           :extra-deps {rewrite-clj/rewrite-clj {:mvn/version "1.2.50"}
@@ -38,5 +38,5 @@
                    :extra-deps {org.clojure/clojure {:mvn/version "1.12.1"}
                                 pfeodrippe/recife {:mvn/version "0.22.0"}
                                 io.github.hive-agi/hive-recife {:git/tag "v0.1.4" :git/sha "a77a70f"}
-                                io.github.hive-agi/hive-spi {:git/tag "v0.1.9" :git/sha "3c468c4"}}
+                                io.github.hive-agi/hive-spi {:mvn/version "0.1.9"}}
                    :main-opts ["-m" "bb-depsolve.cascade-model"]}}}
