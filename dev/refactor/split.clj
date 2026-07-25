@@ -179,8 +179,17 @@
      :facade? false  - the original is deleted, which is what a test namespace
                        wants: re-exporting tests is meaningless.
 
+   Refuses a spec whose :source-file is gone: a split spec is spent once
+   applied, and a moved or already-split source means the spec describes a
+   file that no longer exists.
+
    Returns a path -> form-count map."
   [{:keys [source-file source-dir facade? keep-module] :or {facade? true} :as spec}]
+  (when-not (.exists (io/file source-file))
+    (throw (ex-info (str "split spec points at a source file that does not exist: "
+                         source-file
+                         " — the spec is stale (already applied, or the namespace moved)")
+                    {:source-file source-file :source-dir source-dir})))
   (let [classified (classify spec)
         grouped (group-by :owner classified)
         modules (keys grouped)

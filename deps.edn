@@ -9,7 +9,8 @@
         metosin/malli {:mvn/version "0.20.1"}
         io.github.hive-agi/hive-spi {:git/tag "v0.1.9" :git/sha "3c468c4"}
         io.github.hive-agi/hive-schemas {:mvn/version "0.1.10"}
-        io.github.hive-agi/hive-weave {:mvn/version "0.3.1"}}
+        io.github.hive-agi/hive-weave {:mvn/version "0.3.1"}
+        org.clojure/data.xml {:mvn/version "0.2.0-alpha9"}}
  :aliases
  {  ;; :build — tools.build entrypoint (clojure -T:build <task>). Canonical hive
   ;; build: jar / jar-aot / install / bump / verify-license / deploy.
