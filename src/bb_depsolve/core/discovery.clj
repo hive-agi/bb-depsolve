@@ -28,15 +28,18 @@
        (vec)))
 
 (defn find-dep-files
-  "Find all deps.edn, bb.edn, and shadow-cljs.edn files in the workspace."
+  "Find all deps.edn, bb.edn, and shadow-cljs.edn files in the workspace.
+   The root's own dep files are always included, so --root can point directly
+   AT a project, not only at the workspace container above it."
   [{:keys [root skip-dirs depth]
     :or {root "." skip-dirs default-skip-dirs depth default-depth}}]
   (let [root-dir (str (fs/canonicalize root))
         scan-dirs (if (pos? depth)
-                    (->> (fs/list-dir root-dir)
-                         (filter fs/directory?)
-                         (remove #(skip-path? root-dir skip-dirs %))
-                         (sort))
+                    (into [root-dir]
+                          (->> (fs/list-dir root-dir)
+                               (filter fs/directory?)
+                               (remove #(skip-path? root-dir skip-dirs %))
+                               (sort)))
                     [root-dir])]
     (->> (for [dir scan-dirs
                fname ["deps.edn" "bb.edn" "shadow-cljs.edn"]

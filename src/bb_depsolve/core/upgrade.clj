@@ -34,15 +34,17 @@
                                (count upgrades) (count by-file))))))
 
 (defn upgrade-cmd
-  "Check for newer versions of all dependencies."
+  "Check for newer versions of all dependencies. --project <name> scopes the
+   scan to one project; --root may also point directly at a project dir."
   [{:keys [opts]}]
-  (let [{:keys [root apply commit skip-dirs depth pre-release]
+  (let [{:keys [root apply commit skip-dirs depth pre-release project]
          :or {root "." depth discovery/default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
                    (into #{} (str/split skip-dirs #","))
                    discovery/default-skip-dirs)
-        dep-files (discovery/find-dep-files {:root root :skip-dirs skip-set :depth depth})
+        dep-files (cond->> (discovery/find-dep-files {:root root :skip-dirs skip-set :depth depth})
+                    project (filter #(= project (:project %))))
         dep-file-index (into {} (map (fn [df] [(:path df) df]) dep-files))]
 
     (println (ui/c :bold "Checking latest versions..."))

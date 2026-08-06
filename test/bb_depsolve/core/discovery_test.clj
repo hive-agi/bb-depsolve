@@ -77,9 +77,10 @@
         found (disc/find-dep-files {:root root})]
     (is (= #{["alpha" :deps-edn] ["alpha" :bb-edn]
              ["beta" :deps-edn] ["gamma" :deps-edn] ["delta" :deps-edn]
-             ["ui" :shadow-cljs-edn]}
+             ["ui" :shadow-cljs-edn]
+             [(str (fs/file-name root)) :deps-edn]}
            (set (map (juxt :project :type) found)))
-        "every dep file one level down, vendor excluded, root file not included")
+        "every dep file one level down, vendor excluded, root file included")
     (is (every? #(fs/exists? (:path %)) found))))
 
 (deftest find-dep-files-at-depth-zero-reads-the-root-itself-test
@@ -92,8 +93,8 @@
   (let [root (workspace)
         projects (set (map :project (disc/find-dep-files {:root root
                                                           :skip-dirs #{"alpha" "ui"}})))]
-    (is (= #{"beta" "gamma" "delta" "vendor"} projects)
-        "an explicit skip set replaces the default — vendor comes back")))
+    (is (= #{"beta" "gamma" "delta" "vendor" (str (fs/file-name root))} projects)
+        "an explicit skip set replaces the default — vendor comes back; root always included")))
 
 ;; =============================================================================
 ;; Unit — file-type dispatch
