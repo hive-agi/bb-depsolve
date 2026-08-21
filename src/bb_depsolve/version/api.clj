@@ -69,3 +69,5 @@
 (def parse-osv-vuln vuln/parse-osv-vuln)
 (def severity-rank vuln/severity-rank)
 (def sort-vulns-by-severity vuln/sort-vulns-by-severity)
+
+(def recommended-fix vuln/recommended-fix)

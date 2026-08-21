@@ -37,6 +37,7 @@
   (println)
   (println (ui/c :bold "Audit options:"))
   (println "  --tree-depth <n>   Include transitive deps (default: direct only)")
+  (println "  --fix              Write the clearing version into the declaring dep files")
   (println)
   (println (ui/c :bold "Layers options:"))
   (println "  --org <name>       GitHub org for internal deps (required)")
