@@ -51,6 +51,22 @@
    :bb-depsolve/sync-changes
    [:vector :bb-depsolve/sync-change]
 
+   :bb-depsolve/repo-id :string
+
+   ;; A repository as a dep file declares it: id and url, no credentials yet.
+   :bb-depsolve/mvn-repo
+   [:map [:id :bb-depsolve/repo-id] [:url :string]]
+
+   ;; The same repository once settings.xml has supplied credentials for its
+   ;; id. Both halves are required — a registry we cannot authenticate to is
+   ;; not a resolution source, so it is never represented as one.
+   :bb-depsolve/private-registry
+   [:map
+    [:id :bb-depsolve/repo-id]
+    [:url :string]
+    [:username :string]
+    [:password :string]]
+
    :bb-depsolve/pom-dep
    [:map [:lib :bb-depsolve/lib] [:version :string]]
 

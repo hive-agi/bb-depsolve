@@ -1,0 +1,6 @@
+{:blank true,
+ :central true,
+ :clojars true,
+ :nil true,
+ :private false,
+ :sonatype true}

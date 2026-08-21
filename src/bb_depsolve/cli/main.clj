@@ -16,10 +16,14 @@
             [bb-depsolve.wave.hygiene :as hygiene]
             [bb-depsolve.wave.help :as help]
             [bb-depsolve.release.inspect :as inspect]
-            [bb-depsolve.layer.cmd :as layer]))
+            [bb-depsolve.layer.cmd :as layer]
+            [bb-depsolve.core.auth :as auth]))
 
 (defn- wrap-help
-  "Wrap a command fn so --help prints subcommand usage instead of executing."
+  "Wrap a command fn so --help prints subcommand usage instead of executing.
+   Also the single place every command passes through, so the workspace's
+   private Maven registry is discovered once per invocation, from the --root
+   the command was actually given."
   [cmd-fn cmd-name doc]
   (fn [{:keys [opts] :as m}]
     (if (:help opts)
@@ -28,7 +32,8 @@
           (println (str "  " doc))
           (println)
           (println "Run bb-depsolve --help for all options."))
-      (cmd-fn m))))
+      (do (auth/use-workspace! (select-keys opts [:root :skip-dirs :depth]))
+          (cmd-fn m)))))
 
 (def dispatch-table
   [{:cmds ["sync"], :fn (wrap-help sync/sync-cmd "sync" "Sync internal Git coords to tags and Maven coords to published registry versions"), :doc "Sync internal Git and Maven coords to their authoritative sources"}
