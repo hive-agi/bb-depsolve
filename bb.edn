@@ -1,20 +1,20 @@
 {:paths ["src"]
- :deps {babashka/fs {:mvn/version "0.5.32"}
+ :deps {babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
-        org.babashka/http-client {:mvn/version "0.4.23"}
-        org.babashka/cli {:mvn/version "0.8.67"}
+        org.babashka/http-client {:mvn/version "0.4.24"}
+        org.babashka/cli {:mvn/version "0.12.86"}
         cheshire/cheshire {:mvn/version "6.2.0"}
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
-        io.github.hive-agi/hive-dsl {:git/tag "v0.5.8" :git/sha "755baf5"}
+        io.github.hive-agi/hive-dsl {:git/tag "v0.5.14" :git/sha "b9033a9"}
         metosin/malli {:mvn/version "0.20.1"}
-        io.github.hive-agi/hive-spi {:mvn/version "0.1.9"}
-        io.github.hive-agi/hive-schemas {:mvn/version "0.1.10"}
+        io.github.hive-agi/hive-spi {:mvn/version "0.1.20"}
+        io.github.hive-agi/hive-schemas {:mvn/version "0.1.13"}
         io.github.hive-agi/hive-weave {:mvn/version "0.3.1"}}
  :bbin/bin {bb-depsolve {:main-opts ["-m" "bb-depsolve.cli.main"]}}
  :tasks
  {test {:extra-paths ["test"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
-                     io.github.hive-agi/hive-test {:git/tag "v0.3.10" :git/sha "6b3a04d"}
+                     io.github.hive-agi/hive-test {:git/tag "v0.3.12" :git/sha "01b518a"}
                      io.github.cognitect-labs/test-runner
                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
         :task (exec 'cognitect.test-runner.api/test)}
