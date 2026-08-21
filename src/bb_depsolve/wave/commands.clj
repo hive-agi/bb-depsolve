@@ -8,7 +8,8 @@
             [bb-depsolve.core.git :as git]
             [bb-depsolve.core.lint :as lint]
             [bb-depsolve.core.sync :as sync]
-            [bb-depsolve.core.upgrade :as upgrade]))
+            [bb-depsolve.core.upgrade :as upgrade]
+            [bb-depsolve.core.push :as push]))
 
 (defn bump-wave-cmd
   "Bump all workspace projects that have commits ahead of their last tag."
@@ -58,9 +59,18 @@
             (println (ui/c :dim "  Dry run. Pass --apply to bump all."))))))))
 
 (defn push-all-cmd
-  "Push all workspace projects to their remotes."
+  "Push all workspace projects to their remotes.
+
+   --sync     fetch first and MERGE an upstream that has moved ahead (a CI
+              release commit, typically) instead of failing non-fast-forward.
+              A project whose working tree has modifications to a file the
+              incoming commits touch is skipped: that tree belongs to whoever
+              dirtied it.
+   --resolve  settle a conflicted merge with the sweep's policy
+              (deps.edn/bb.edn -> ours, VERSION -> theirs, build.clj -> drop).
+              Any other conflicted path aborts the merge untouched."
   [{:keys [opts]}]
-  (let [{:keys [root skip-dirs]
+  (let [{:keys [root skip-dirs sync resolve]
          :or {root "."}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -70,31 +80,84 @@
                       (filter fs/directory?)
                       (remove #(discovery/skip-path? root-dir skip-set %))
                       (filter #(fs/exists? (fs/path % ".git")))
-                      (sort))]
+                      (sort))
+        push! (fn [dir]
+                (let [p (git/git dir "push")
+                      t (git/git dir "push" "--tags")]
+                  (and (zero? (:exit p)) (zero? (:exit t)))))
+        settle! (fn [dir conflicts]
+                  (let [{:keys [resolvable? actions unknown]} (push/conflict-plan conflicts)]
+                    (if-not resolvable?
+                      (do (git/git dir "merge" "--abort") {:ok? false :unknown unknown})
+                      (do (doseq [[path action] actions]
+                            (case action
+                              :ours (do (git/git dir "checkout" "--ours" path)
+                                        (git/git dir "add" path))
+                              :theirs (do (git/git dir "checkout" "--theirs" path)
+                                          (git/git dir "add" path))
+                              :remove (git/git dir "rm" "-q" path)
+                              nil))
+                          (let [c (git/git dir "commit" "--no-edit")]
+                            {:ok? (zero? (:exit c))})))))]
 
     (println (ui/c :bold (format "Pushing %d projects..." (count projects))))
     (println)
 
-    (let [pushed (atom 0)
-          skipped (atom 0)
-          failed (atom 0)]
+    (let [tally (atom {})
+          bump! (fn [k] (swap! tally update k (fnil inc 0)))]
       (doseq [project-dir projects
               :let [project (str (fs/file-name project-dir))
-                    dir (str project-dir)]]
-        (if-not (git/git-has-remote? dir)
-          (do (swap! skipped inc)
-              (println (ui/c :dim (str "  " project " — no remote, skipped"))))
-          (let [push-result (git/git dir "push")
-                tag-result (git/git dir "push" "--tags")]
-            (if (and (zero? (:exit push-result)) (zero? (:exit tag-result)))
-              (do (swap! pushed inc)
-                  (println (ui/c :green (str "  " project " — pushed"))))
-              (do (swap! failed inc)
-                  (println (ui/c :yellow (str "  " project " — push failed"))))))))
+                    dir (str project-dir)
+                    _ (when sync (git/git dir "fetch" "--quiet"))
+                    upstream (git/git-upstream dir)
+                    {:keys [ahead behind]} (if upstream
+                                             (git/git-ahead-behind dir upstream)
+                                             {:ahead 0 :behind 0})
+                    plan (push/push-plan
+                          {:has-remote? (git/git-has-remote? dir)
+                           :upstream upstream
+                           :ahead ahead
+                           :behind behind
+                           :dirty-files (git/git-dirty-files dir)
+                           :incoming-files (when upstream (git/git-incoming-files dir upstream))})]]
+        (case (:action plan)
+          :skip
+          (do (bump! :skipped)
+              (println (ui/c :dim (format "  %-24s skipped — %s%s" project
+                                          (name (:reason plan))
+                                          (if-let [f (:files plan)]
+                                            (str " (" (str/join ", " f) ")")
+                                            "")))))
+          :push
+          (if (push! dir)
+            (do (bump! :pushed) (println (ui/c :green (str "  " project " — pushed"))))
+            (do (bump! :failed) (println (ui/c :yellow (str "  " project " — push failed")))))
+
+          :merge-then-push
+          (if-not sync
+            (do (bump! :skipped)
+                (println (ui/c :dim (format "  %-24s skipped — %d behind, pass --sync" project behind))))
+            (let [m (git/git dir "merge" "--no-edit" upstream)
+                  conflicts (when-not (zero? (:exit m)) (git/git-conflicted-files dir))
+                  settled (cond
+                            (zero? (:exit m)) {:ok? true}
+                            (not resolve) (do (git/git dir "merge" "--abort")
+                                              {:ok? false :unknown conflicts})
+                            :else (settle! dir conflicts))]
+              (cond
+                (not (:ok? settled))
+                (do (bump! :conflicted)
+                    (println (ui/c :yellow (format "  %-24s merge conflict — %s" project
+                                                   (str/join ", " (:unknown settled))))))
+                (push! dir)
+                (do (bump! :pushed) (println (ui/c :green (str "  " project " — merged + pushed"))))
+                :else
+                (do (bump! :failed) (println (ui/c :yellow (str "  " project " — push failed")))))))))
 
       (println)
-      (println (ui/c :bold (format "Pushed: %d  Skipped: %d  Failed: %d"
-                                     @pushed @skipped @failed))))))
+      (println (ui/c :bold (format "Pushed: %d  Skipped: %d  Conflicted: %d  Failed: %d"
+                                   (get @tally :pushed 0) (get @tally :skipped 0)
+                                   (get @tally :conflicted 0) (get @tally :failed 0)))))))
 
 (defn release-wave-cmd
   "Full workspace release: upgrade → lint → sync → bump → re-sync → push."

@@ -77,6 +77,7 @@
                           :pre-release :boolean
                           :conflicts-only :boolean
                           :resolved :boolean
+                          :resolve :boolean
                           :commit :boolean
                           :help :boolean
                           :major :boolean

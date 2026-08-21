@@ -37,6 +37,62 @@
     (and (zero? (:exit result))
          (not (str/blank? (:out result))))))
 
+(defn git-upstream
+  "Upstream ref of the current branch (e.g. \"origin/main\"), or nil."
+  [project-dir]
+  (let [result (git project-dir "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{u}")]
+    (when (zero? (:exit result))
+      (let [ref (str/trim (:out result))]
+        (when-not (str/blank? ref) ref)))))
+
+(defn git-ahead-behind
+  "Commits ahead of / behind UPSTREAM. Returns {:ahead n :behind n}."
+  [project-dir upstream]
+  (let [count-of (fn [range-spec]
+                   (let [r (git project-dir "rev-list" "--count" range-spec)]
+                     (if (zero? (:exit r))
+                       (parse-long (str/trim (:out r)))
+                       0)))]
+    {:ahead (or (count-of (str upstream "..HEAD")) 0)
+     :behind (or (count-of (str "HEAD.." upstream)) 0)}))
+
+(defn git-dirty-files
+  "Tracked files with uncommitted modifications. Untracked files are excluded:
+   they cannot conflict with an incoming commit."
+  [project-dir]
+  (let [result (git project-dir "status" "--porcelain")]
+    (if (zero? (:exit result))
+      (->> (str/split-lines (:out result))
+           (keep (fn [line]
+                   (when (re-find #"^( M|M |MM|AM|A )" line)
+                     (str/trim (subs line 3)))))
+           vec)
+      [])))
+
+(defn git-incoming-files
+  "Files the commits in HEAD..UPSTREAM touch."
+  [project-dir upstream]
+  (let [result (git project-dir "diff" "--name-only" (str "HEAD.." upstream))]
+    (if (zero? (:exit result))
+      (->> (str/split-lines (:out result)) (remove str/blank?) vec)
+      [])))
+
+(defn git-conflicted-files
+  "Paths left unmerged after a failed merge, including modify/delete pairs."
+  [project-dir]
+  (let [unmerged (git project-dir "diff" "--name-only" "--diff-filter=U")
+        status (git project-dir "status" "--porcelain")]
+    (->> (concat (when (zero? (:exit unmerged)) (str/split-lines (:out unmerged)))
+                 (when (zero? (:exit status))
+                   (keep (fn [line]
+                           (when (re-find #"^(DU|UD|AA|DD|UA|AU)" line)
+                             (str/trim (subs line 3))))
+                         (str/split-lines (:out status)))))
+         (remove str/blank?)
+         distinct
+         sort
+         vec)))
+
 (defn- auto-commit-project!
   "Commit changed dep files in a project with descriptive message.
    Returns true if a commit was made."
