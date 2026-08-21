@@ -13,34 +13,78 @@
   "Maven Central's repository root — the authoritative artifact listing."
   "https://repo1.maven.org/maven2")
 
+(def ^:private clojars-repo-base
+  "Clojars' repository root — the authoritative artifact listing."
+  "https://repo.clojars.org")
+
 (defn resolve-clojars-versions
-  "Every version Clojars lists for the artifact. Returns Result<#{string}>."
+  "Every version Clojars lists for the artifact. Returns Result<#{string}>.
+
+   Reads repo.clojars.org's maven-metadata.xml — the complete listing. The JSON
+   API is a FALLBACK: it reports `latest_release` plus at most five
+   `recent_versions`, so a lib with a longer history is under-reported."
   [group-id artifact-id]
-  (r/try-effect*
-   :io/clojars
-   (let [url (format "https://clojars.org/api/artifacts/%s/%s" group-id artifact-id)
-         headers (merge {"Accept" "application/json"} (auth/auth-headers :clojars))
-         resp (http/get url {:headers headers :throw false})]
-     (if (= 200 (:status resp))
-       (let [body (json/parse-string (:body resp) true)]
-         (into (if-let [latest (:latest_release body)] #{latest} #{})
-               (keep :version)
-               (:recent_versions body)))
-       (throw (ex-info "Clojars HTTP error" {:status (:status resp)}))))))
+  (let [metadata (r/try-effect*
+                  :io/clojars
+                  (let [url (v/maven-metadata-url clojars-repo-base group-id artifact-id)
+                        headers (merge {"Accept" "application/xml"} (auth/auth-headers :clojars))
+                        resp (http/get url {:headers headers :throw false})]
+                    (if (= 200 (:status resp))
+                      (:body resp)
+                      (throw (ex-info "Clojars metadata HTTP error" {:status (:status resp)})))))
+        versions (when (r/ok? metadata)
+                   (seq (v/parse-maven-metadata-versions (:ok metadata))))]
+    (if versions
+      (r/ok (set versions))
+      (r/try-effect*
+       :io/clojars
+       (let [url (format "https://clojars.org/api/artifacts/%s/%s" group-id artifact-id)
+             headers (merge {"Accept" "application/json"} (auth/auth-headers :clojars))
+             resp (http/get url {:headers headers :throw false})]
+         (if (= 200 (:status resp))
+           (let [body (json/parse-string (:body resp) true)]
+             (into (if-let [latest (:latest_release body)] #{latest} #{})
+                   (keep :version)
+                   (:recent_versions body)))
+           (throw (ex-info "Clojars HTTP error" {:status (:status resp)}))))))))
 
 (defn resolve-clojars-latest
-  "Query Clojars API for latest release version. Returns Result<string>.
+  "Latest version Clojars publishes for the artifact. Returns Result<string>.
+
+   Reads repo.clojars.org's maven-metadata.xml — the repository's own listing —
+   and takes the newest entry by version-compare, skipping pre-releases unless
+   allow-pre?. The JSON API's `latest_release` is a FALLBACK only: it names the
+   newest UPLOAD, pre-releases included (it reported metosin/reitit 0.11.0-rc1
+   and http-kit 2.9.0-beta4), so a resolver reading it loses the library
+   entirely once a maintainer cuts a release candidate.
+
    Honors CLOJARS_USERNAME/CLOJARS_PASSWORD env for private repos."
-  [group-id artifact-id]
-  (r/try-effect*
-   :io/clojars
-   (let [url (format "https://clojars.org/api/artifacts/%s/%s" group-id artifact-id)
-         headers (merge {"Accept" "application/json"} (auth/auth-headers :clojars))
-         resp (http/get url {:headers headers :throw false})]
-     (if (= 200 (:status resp))
-       (or (-> (json/parse-string (:body resp) true) :latest_release)
-           (throw (ex-info "No latest_release" {:group group-id :artifact artifact-id})))
-       (throw (ex-info "Clojars HTTP error" {:status (:status resp)}))))))
+  ([group-id artifact-id] (resolve-clojars-latest group-id artifact-id false))
+  ([group-id artifact-id allow-pre?]
+   (let [metadata (r/try-effect*
+                   :io/clojars
+                   (let [url (v/maven-metadata-url clojars-repo-base group-id artifact-id)
+                         headers (merge {"Accept" "application/xml"} (auth/auth-headers :clojars))
+                         resp (http/get url {:headers headers :throw false})]
+                     (if (= 200 (:status resp))
+                       (:body resp)
+                       (throw (ex-info "Clojars metadata HTTP error" {:status (:status resp)})))))
+         latest (when (r/ok? metadata)
+                  (v/latest-published-version (:ok metadata) {:allow-pre? allow-pre?}))]
+     (if latest
+       (r/ok latest)
+       (r/try-effect*
+        :io/clojars
+        (let [url (format "https://clojars.org/api/artifacts/%s/%s" group-id artifact-id)
+              headers (merge {"Accept" "application/json"} (auth/auth-headers :clojars))
+              resp (http/get url {:headers headers :throw false})]
+          (if (= 200 (:status resp))
+            (let [release (-> (json/parse-string (:body resp) true) :latest_release)]
+              (if (and release (or allow-pre? (not (v/pre-release? release))))
+                release
+                (throw (ex-info "No published latest_release"
+                                {:group group-id :artifact artifact-id :latest-release release}))))
+            (throw (ex-info "Clojars HTTP error" {:status (:status resp)})))))))))
 
 (defn resolve-maven-versions
   "Every version Maven Central lists for the artifact. Returns Result<#{string}>."
@@ -177,10 +221,10 @@
         group (or group artifact)
         artifact (or artifact group)
         gitea-base (auth/gitea-registry-url)
-        candidates (cond-> [(let [clojars (resolve-clojars-latest group artifact)]
+        candidates (cond-> [(let [clojars (resolve-clojars-latest group artifact allow-pre?)]
                               (if (r/ok? clojars)
                                 clojars
-                                (resolve-maven-latest group artifact)))]
+                                (resolve-maven-latest group artifact allow-pre?)))]
                      gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)
                                       (resolve-cached-maven-latest group artifact allow-pre?)))
         versions (->> candidates
