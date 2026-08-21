@@ -7,7 +7,15 @@
             [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.version.api :as v]
             [clojure.string :as str]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [hive-weave.parallel :as par]))
+
+(def ^:private resolve-concurrency
+  "Simultaneous registry lookups. Each is one or more HTTP round-trips, so the
+   ceiling is remote politeness, not local CPU. Matches core.sync."
+  8)
+
+(def ^:private resolve-timeout-ms 30000)
 
 (defn apply-mvn-change!
   "Apply a single mvn version change to file content, dispatching by file type.
@@ -70,12 +78,22 @@
             latest-versions (atom {})
             unresolved (atom [])]
 
-        (doseq [[i lib] (map-indexed vector (sort-by str unique-libs))]
-          (when (zero? (mod i 10))
-            (printf "\r  [%d/%d] %s" (inc i) (count unique-libs) (ui/c :dim (str lib)))
-            (flush))
-          (let [result (registries/resolve-mvn-latest lib (boolean pre-release))]
-            (if (r/ok? result)
+        ;; Resolution is one or more remote round-trips per lib and dominates
+        ;; upgrade's wall clock, so the lookups run concurrently — the same
+        ;; bounded fan-out core.sync uses. A lib that times out or throws
+        ;; surfaces in :unresolved rather than vanishing from the report.
+        (let [libs (vec (sort-by str unique-libs))
+              results (par/bounded-pmap
+                       {:concurrency resolve-concurrency
+                        :timeout-ms  resolve-timeout-ms
+                        :fallback    nil}
+                       (fn [lib] (registries/resolve-mvn-latest lib (boolean pre-release)))
+                       libs)]
+          (doseq [[i lib result] (map vector (range) libs results)]
+            (when (zero? (mod i 10))
+              (printf "\r  [%d/%d] %s" (inc i) (count libs) (ui/c :dim (str lib)))
+              (flush))
+            (if (and result (r/ok? result))
               (swap! latest-versions assoc lib (:ok result))
               (swap! unresolved conj lib))))
 
