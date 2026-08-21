@@ -35,7 +35,11 @@
 
 (defn upgrade-cmd
   "Check for newer versions of all dependencies. --project <name> scopes the
-   scan to one project; --root may also point directly at a project dir."
+   scan to one project; --root may also point directly at a project dir.
+
+   Libraries no registry could resolve are NAMED, not merely counted: an
+   unresolved library is a coverage gap (it may have upgrades nobody will see),
+   which a bare `Resolved N / M` line hides."
   [{:keys [opts]}]
   (let [{:keys [root apply commit skip-dirs depth pre-release project]
          :or {root "." depth discovery/default-depth}} opts
@@ -63,17 +67,25 @@
 
       (let [unique-libs (keys @all-mvn-deps)
             _ (printf "  Checking %d unique libraries...\n" (count unique-libs))
-            latest-versions (atom {})]
+            latest-versions (atom {})
+            unresolved (atom [])]
 
         (doseq [[i lib] (map-indexed vector (sort-by str unique-libs))]
           (when (zero? (mod i 10))
             (printf "\r  [%d/%d] %s" (inc i) (count unique-libs) (ui/c :dim (str lib)))
             (flush))
           (let [result (registries/resolve-mvn-latest lib (boolean pre-release))]
-            (when (r/ok? result)
-              (swap! latest-versions assoc lib (:ok result)))))
+            (if (r/ok? result)
+              (swap! latest-versions assoc lib (:ok result))
+              (swap! unresolved conj lib))))
 
         (println "\r  " (ui/c :green (format "Resolved %d / %d libraries" (count @latest-versions) (count unique-libs))))
+        (when (seq @unresolved)
+          (println)
+          (println (ui/c :yellow (format "  %d library(ies) NO registry could resolve — upgrades for these are invisible:"
+                                         (count @unresolved))))
+          (doseq [lib (sort-by str @unresolved)]
+            (println (ui/c :dim (str "    " lib)))))
         (println)
 
         (let [upgrades (->> @file-deps

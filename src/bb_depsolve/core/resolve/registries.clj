@@ -9,6 +9,10 @@
 
 (declare resolve-clojars-versions resolve-clojars-latest resolve-maven-versions resolve-maven-latest resolve-gitea-versions resolve-gitea-latest maven-cache-dir resolve-cached-maven-latest resolve-mvn-versions resolve-mvn-latest)
 
+(def ^:private maven-central-base
+  "Maven Central's repository root — the authoritative artifact listing."
+  "https://repo1.maven.org/maven2")
+
 (defn resolve-clojars-versions
   "Every version Clojars lists for the artifact. Returns Result<#{string}>."
   [group-id artifact-id]
@@ -53,20 +57,41 @@
        (throw (ex-info "Maven HTTP error" {:status (:status resp)}))))))
 
 (defn resolve-maven-latest
-  "Query Maven Central for latest version. Returns Result<string>.
+  "Latest version Maven Central publishes for the artifact. Returns Result<string>.
+
+   Reads repo1's maven-metadata.xml — the repository's own listing — and takes
+   the newest entry by version-compare, skipping pre-releases unless allow-pre?.
+   search.maven.org is a FALLBACK only: its `latestVersion` is a denormalized
+   Solr field that lags the repository (it reported postgresql 42.7.7 while
+   repo1 already listed 42.7.13), so a resolver reading it silently
+   under-reports upgrades.
+
    Honors MAVEN_AUTH env var (raw Authorization header)."
-  [group-id artifact-id]
-  (r/try-effect*
-   :io/maven-central
-   (let [url (format "https://search.maven.org/solrsearch/select?q=g:%%22%s%%22+AND+a:%%22%s%%22&rows=1&wt=json"
-                     group-id artifact-id)
-         headers (auth/auth-headers :maven)
-         resp (http/get url (merge {:throw false}
-                                   (when (seq headers) {:headers headers})))]
-     (if (= 200 (:status resp))
-       (or (-> (json/parse-string (:body resp) true) :response :docs first :latestVersion)
-           (throw (ex-info "No latestVersion" {:group group-id :artifact artifact-id})))
-       (throw (ex-info "Maven HTTP error" {:status (:status resp)}))))))
+  ([group-id artifact-id] (resolve-maven-latest group-id artifact-id false))
+  ([group-id artifact-id allow-pre?]
+   (let [metadata (r/try-effect*
+                   :io/maven-central
+                   (let [url (v/maven-metadata-url maven-central-base group-id artifact-id)
+                         headers (merge {"Accept" "application/xml"} (auth/auth-headers :maven))
+                         resp (http/get url {:headers headers :throw false})]
+                     (if (= 200 (:status resp))
+                       (:body resp)
+                       (throw (ex-info "Maven metadata HTTP error" {:status (:status resp)})))))
+         latest (when (r/ok? metadata)
+                  (v/latest-published-version (:ok metadata) {:allow-pre? allow-pre?}))]
+     (if latest
+       (r/ok latest)
+       (r/try-effect*
+        :io/maven-central
+        (let [url (format "https://search.maven.org/solrsearch/select?q=g:%%22%s%%22+AND+a:%%22%s%%22&rows=1&wt=json"
+                          group-id artifact-id)
+              headers (auth/auth-headers :maven)
+              resp (http/get url (merge {:throw false}
+                                        (when (seq headers) {:headers headers})))]
+          (if (= 200 (:status resp))
+            (or (-> (json/parse-string (:body resp) true) :response :docs first :latestVersion)
+                (throw (ex-info "No latestVersion" {:group group-id :artifact artifact-id})))
+            (throw (ex-info "Maven HTTP error" {:status (:status resp)})))))))))
 
 (defn resolve-gitea-versions
   "Every version the private Gitea Maven registry lists. Returns Result<#{string}>."
