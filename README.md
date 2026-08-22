@@ -1,5 +1,14 @@
 # bb-depsolve
 
+<!-- hive-badges -->
+
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.hive-agi/bb-depsolve.svg)](https://clojars.org/io.github.hive-agi/bb-depsolve)
+[![cljdoc](https://cljdoc.org/badge/io.github.hive-agi/bb-depsolve)](https://cljdoc.org/d/io.github.hive-agi/bb-depsolve/CURRENT)
+[![release](https://github.com/hive-agi/bb-depsolve/actions/workflows/release.yml/badge.svg)](https://github.com/hive-agi/bb-depsolve/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+<!-- /hive-badges -->
+
 Monorepo dependency management for Clojure/Babashka workspaces.
 
 Sync internal git deps, upgrade mvn versions, and visualize dependency drift — all from one CLI.
