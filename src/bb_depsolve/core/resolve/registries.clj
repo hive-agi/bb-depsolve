@@ -1,13 +1,12 @@
 (ns bb-depsolve.core.resolve.registries
-  (:require [babashka.fs :as fs]
-            [babashka.http-client :as http]
+  (:require [babashka.http-client :as http]
             [bb-depsolve.core.auth :as auth]
             [bb-depsolve.version.api :as v]
             [cheshire.core :as json]
             [clojure.string :as str]
             [hive-dsl.result :as r]))
 
-(declare resolve-clojars-versions resolve-clojars-latest resolve-maven-versions resolve-maven-latest resolve-gitea-versions resolve-gitea-latest maven-cache-dir resolve-cached-maven-latest resolve-mvn-versions resolve-mvn-latest)
+(declare resolve-clojars-versions resolve-clojars-latest resolve-maven-versions resolve-maven-latest resolve-gitea-versions resolve-gitea-latest resolve-mvn-versions read-registry-latest resolve-mvn-reads resolve-mvn-by-registry resolve-mvn-latest)
 
 (def ^:private maven-central-base
   "Maven Central's repository root — the authoritative artifact listing."
@@ -165,31 +164,6 @@
                            {:group group :artifact artifact})))
        (throw (ex-info "Gitea HTTP error" {:status (:status resp)}))))))
 
-(defn maven-cache-dir
-  "Local Maven repository used for cached remote metadata. M2_REPO overrides
-   ~/.m2/repository."
-  []
-  (or (System/getenv "M2_REPO")
-      (str (fs/path (System/getProperty "user.home") ".m2" "repository"))))
-
-(defn resolve-cached-maven-latest
-  "Resolve latest version from Maven's cached REMOTE metadata.
-   Ignores maven-metadata-local.xml so locally installed/deployed-only versions
-   cannot masquerade as published artifacts. Returns Result<string>."
-  [group artifact allow-pre?]
-  (r/try-effect*
-   :io/maven-cache
-   (let [artifact-dir (fs/path (maven-cache-dir) (v/group-id->path group) artifact)
-         metadata-files (when (fs/directory? artifact-dir)
-                          (->> (fs/glob artifact-dir "maven-metadata-*.xml")
-                               (remove #(= "maven-metadata-local.xml" (str (fs/file-name %))))))
-         versions (->> metadata-files
-                       (mapcat #(v/parse-maven-metadata-versions (slurp (str %))))
-                       (filter #(or allow-pre? (not (v/pre-release? %)))))]
-     (or (last (sort v/version-compare versions))
-         (throw (ex-info "No cached remote Maven metadata version"
-                         {:group group :artifact artifact}))))))
-
 (defn resolve-mvn-versions
   "Union of every version LIB-SYM resolves to across the maven registries.
    Unreachable registries contribute nothing rather than failing the union.
@@ -207,31 +181,103 @@
       versions
       (into #{} (remove v/pre-release?) versions))))
 
+(defn- split-lib
+  "[group artifact] of LIB-SYM; an unqualified name is both."
+  [lib-sym]
+  (let [[group artifact] (str/split (str lib-sym) #"/")]
+    [(or group artifact) (or artifact group)]))
+
+(defn- registry-host
+  "Host of URL, the label a private registry gets when it has no repository id."
+  [url]
+  (try (.getHost (java.net.URI. (str url)))
+       (catch Exception _ nil)))
+
+(defn- http-metadata
+  "GET a maven-metadata.xml. Returns the response map, or {:status nil
+   :message m} when the transport itself failed (timeout, DNS, refused)."
+  [url headers]
+  (try
+    (http/get url {:headers headers :throw false})
+    (catch Exception e
+      {:status nil :message (ex-message e)})))
+
+(defn read-registry-latest
+  "ONE registry's answer for an artifact, kept apart from a failure to answer:
+     {:version v}   it lists an acceptable version (pre-releases dropped unless ALLOW-PRE?)
+     {:absent true} it answered, and the artifact (or an acceptable version) is not there
+     {:unread {:status :message}} it did not answer: transport failure, 5xx,
+                    or an auth refusal (401/403), which is a blind read, not an absence.
+   Reads BASE-URL's maven-metadata.xml with the credentials AUTH-TARGET names."
+  [base-url auth-target group artifact allow-pre?]
+  (let [url (v/maven-metadata-url base-url group artifact)
+        headers (merge {"Accept" "application/xml"} (auth/auth-headers auth-target))
+        {:keys [status body message]} (http-metadata url headers)]
+    (cond
+      (= 200 status) (if-let [latest (v/latest-published-version body {:allow-pre? allow-pre?})]
+                       {:version latest}
+                       {:absent true})
+      (= 404 status) {:absent true}
+      :else          {:unread (cond-> {:status status}
+                                message (assoc :message message))})))
+
+(defn resolve-mvn-reads
+  "Every registry's answer for LIB-SYM, as
+   {:versions [registry-version] :unread [registry-read-failure]}.
+
+   Clojars is read first; Maven Central only when Clojars answers ABSENT (a
+   Clojars that did not answer is reported unread, never papered over by
+   Central or by a JSON API). The private registry is read when one is
+   configured. Nothing else counts: the ~/.m2 cache is not a registry, and a
+   stale cache standing in for a registry that did not answer is exactly how
+   a plan full of downgrades gets written."
+  [lib-sym allow-pre?]
+  (let [[group artifact] (split-lib lib-sym)
+        private-url (auth/gitea-registry-url)
+        private-id (or (:id (auth/private-registry)) (registry-host private-url) "private")
+        clojars (read-registry-latest clojars-repo-base :clojars group artifact allow-pre?)
+        central (when (:absent clojars)
+                  (read-registry-latest maven-central-base :maven group artifact allow-pre?))
+        private (when private-url
+                  (read-registry-latest private-url :gitea group artifact allow-pre?))
+        reads [["clojars" clojars-repo-base true clojars]
+               ["central" maven-central-base true central]
+               [private-id private-url false private]]]
+    {:versions (vec (for [[id url public? {:keys [version]}] reads
+                          :when version]
+                      {:id id :url url :public? public? :version version}))
+     :unread   (vec (for [[id url public? {:keys [unread]}] reads
+                          :when unread]
+                      (cond-> {:id id :url url :public? public? :error :io/unread}
+                        (:status unread)  (assoc :status (:status unread))
+                        (:message unread) (assoc :message (:message unread)))))}))
+
+(defn resolve-mvn-by-registry
+  "Latest PUBLISHED version of LIB-SYM per registry that ANSWERED. Returns
+   Result<[registry-version]>: one {:id :url :public? :version} per registry,
+   sorted by id. Errs :io/registry-unread when nothing answered but some
+   registry failed to (the read was blind), :io/no-published-version when
+   every registry answered and none lists an acceptable version.
+
+   A consumer sees a version only through the registries it declares, so the
+   answer keeps them apart instead of collapsing to one MAX. See
+   resolve-mvn-reads for the unread half."
+  [lib-sym allow-pre?]
+  (let [{:keys [versions unread]} (resolve-mvn-reads lib-sym allow-pre?)]
+    (cond
+      (seq versions) (r/ok (vec (sort-by :id versions)))
+      (seq unread)   (r/err :io/registry-unread {:lib lib-sym :unread unread})
+      :else          (r/err :io/no-published-version {:lib lib-sym :allow-pre? allow-pre?}))))
+
 (defn resolve-mvn-latest
   "Resolve latest PUBLISHED version across registries. Returns Result<string>.
 
-   Always consults Clojars (falling back to Maven Central). When MAVEN_URL is
-   set, ALSO consults the private Gitea Maven registry plus Maven's cached
-   remote metadata, returning the NEWEST version across whichever sources
-   succeed (compared via version-compare).
-   Filters pre-releases unless allow-pre? is true. Errs when no source yields
-   an acceptable published version."
+   This is the RESOLVER's view: the newest version ANY registry that answered
+   lists. It is not what one consumer can fetch; for that, project
+   resolve-mvn-by-registry through the consumer's declared repositories
+   (bb-depsolve.version.repos). Filters pre-releases unless allow-pre?. Errs
+   :io/registry-unread when no registry answered, :io/no-published-version
+   when they all did and none lists an acceptable version."
   [lib-sym allow-pre?]
-  (let [[group artifact] (str/split (str lib-sym) #"/")
-        group (or group artifact)
-        artifact (or artifact group)
-        gitea-base (auth/gitea-registry-url)
-        candidates (cond-> [(let [clojars (resolve-clojars-latest group artifact allow-pre?)]
-                              (if (r/ok? clojars)
-                                clojars
-                                (resolve-maven-latest group artifact allow-pre?)))]
-                     gitea-base (conj (resolve-gitea-latest gitea-base group artifact allow-pre?)
-                                      (resolve-cached-maven-latest group artifact allow-pre?)))
-        versions (->> candidates
-                      (filter r/ok?)
-                      (map :ok)
-                      (remove nil?)
-                      (filter #(or allow-pre? (not (v/pre-release? %)))))]
-    (if (seq versions)
-      (r/ok (last (sort v/version-compare versions)))
-      (r/err :io/no-published-version {:lib lib-sym :allow-pre? allow-pre?}))))
+  (r/let-ok [by-registry (resolve-mvn-by-registry lib-sym allow-pre?)]
+    (r/ok (:version (last (sort-by :version v/version-compare by-registry))))))

@@ -33,6 +33,12 @@
       (try (edn/read-string (slurp (str f)))
            (catch Exception _ nil)))))
 
+(defn publish-target
+  "The `:publish` target PROJECT-DIR's version.edn declares (:clojars, :gitea,
+   :gitea-source, :none), or nil when the checkout or the key is absent."
+  [project-dir]
+  (:publish (read-version-config project-dir)))
+
 (defn release-mode
   "Release model of PROJECT-DIR: :pinned when a tracked VERSION file drives the
    version, :rolling when it is derived from version.edn :minor plus the commit

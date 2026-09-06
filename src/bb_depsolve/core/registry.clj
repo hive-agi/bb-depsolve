@@ -9,51 +9,24 @@
    dep file's `:mvn/repos` entry and a `settings.xml` `<server>`. The url comes
    from the former, the credentials from the latter. Environment variables
    (MAVEN_URL / MAVEN_USERNAME / MAVEN_TOKEN) are resolved by
-   bb-depsolve.core.auth and take precedence over anything discovered here."
+   bb-depsolve.core.auth and take precedence over anything discovered here.
+
+   The pure half (which repositories a dep file declares, and which of them
+   are public) lives in bb-depsolve.version.repos and is re-exported here."
   (:require [babashka.fs :as fs]
             [clojure.data.xml :as xml]
-            [clojure.edn :as edn]
             [clojure.string :as str]
             [malli.core :as m]
             [bb-depsolve.schema.api]
-            [bb-depsolve.core.discovery :as discovery]))
+            [bb-depsolve.core.discovery :as discovery]
+            [bb-depsolve.version.repos :as repos]))
 
 ;; ---------------------------------------------------------------- Calculation
 
-(def public-repo-hosts
-  "Hosts whose artifacts need no private credentials."
-  #{"repo1.maven.org" "repo.maven.apache.org" "central.sonatype.com"
-    "oss.sonatype.org" "s01.oss.sonatype.org" "repo.clojars.org" "clojars.org"})
-
-(defn public-repo?
-  "True when URL is a well-known public Maven host. Total: true for nil/blank,
-   so an unusable entry is never mistaken for a private registry."
-  [url]
-  (if (str/blank? url)
-    true
-    (boolean (some #(str/includes? url %) public-repo-hosts))))
-
-(defn repos-in
-  "Every `:mvn/repos` entry declared by one parsed dep-file map, top level and
-   under any alias. Returns [{:id string :url string} ...]. Total: [] on nil."
-  [dep-edn]
-  (when (map? dep-edn)
-    (into []
-          (comp (mapcat #(seq (:mvn/repos %)))
-                (keep (fn [[id {:keys [url]}]]
-                        (when (and id url)
-                          {:id (name id) :url url}))))
-          (cons dep-edn (vals (:aliases dep-edn))))))
-
-(defn private-repos
-  "Distinct non-public repositories declared across DEP-EDNS, in declaration
-   order. Returns [{:id :url} ...]."
-  [dep-edns]
-  (into []
-        (comp (mapcat repos-in)
-              (remove #(public-repo? (:url %)))
-              (distinct))
-        dep-edns))
+(def public-repo-hosts repos/public-repo-hosts)
+(def public-repo? repos/public-repo?)
+(def repos-in repos/repos-in)
+(def private-repos repos/private-repos)
 
 (defn parse-settings-servers
   "Credentials from a Maven settings.xml body, as {id {:username :password}}.
@@ -85,14 +58,6 @@
                 (when-let [creds (get servers id)]
                   (merge repo creds))))
         repos))
-
-(m/=> public-repo? [:=> [:cat [:maybe :string]] :boolean])
-
-(m/=> repos-in
-      [:=> [:cat [:maybe :any]] [:maybe [:vector :bb-depsolve/mvn-repo]]])
-
-(m/=> private-repos
-      [:=> [:cat [:sequential :any]] [:vector :bb-depsolve/mvn-repo]])
 
 (m/=> parse-settings-servers
       [:=> [:cat [:maybe :string]]
@@ -129,7 +94,7 @@
   [opts]
   (into []
         (keep (fn [{:keys [path]}]
-                (try (edn/read-string (slurp path))
+                (try (repos/read-dep-content (slurp path))
                      (catch Exception _ nil))))
         (discovery/find-dep-files opts)))
 

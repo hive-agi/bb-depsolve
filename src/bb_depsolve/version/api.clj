@@ -7,7 +7,8 @@
             [bb-depsolve.version.rewrite :as rewrite]
             [bb-depsolve.version.semver :as semver]
             [bb-depsolve.version.tree :as tree]
-            [bb-depsolve.version.vuln :as vuln]))
+            [bb-depsolve.version.vuln :as vuln]
+            [bb-depsolve.version.repos :as repos]))
 
 (def parse-semver semver/parse-semver)
 (def pre-release? semver/pre-release?)
@@ -35,6 +36,14 @@
 (def pick-sha rewrite/pick-sha)
 (def tag->mvn-version semver/tag->mvn-version)
 (def sync-changes-in-content rewrite/sync-changes-in-content)
+
+(def downgrade-change? rewrite/downgrade-change?)
+
+(def declared-repos repos/declared-repos)
+
+(def project-resolved repos/project-resolved)
+
+(def withheld-pins repos/withheld)
 (def bump-patch semver/bump-patch)
 (def bump-minor semver/bump-minor)
 (def bump-major semver/bump-major)
