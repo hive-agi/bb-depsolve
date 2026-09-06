@@ -238,6 +238,12 @@ waiting on 2 of 3 artifact(s) — 34s elapsed
 On a terminal the block is redrawn in place; through a pipe each state change prints
 one line. Polling backs off from 2s to a 15s ceiling, bounded by `--await-timeout`.
 
+An artifact counts as published only when every consumer the plan re-pins in a later
+wave can fetch it: a consumer pinning by tag needs the tag, a consumer pinning by
+`:mvn/version` needs the artifact on a registry its own `:mvn/repos` reach. A version
+that exists only on the private registry does not release a wave whose consumers are
+public projects.
+
 `--no-wait` sets the plan's await mode to skip. A timeout is a loud failure naming
 every lib that never published — never a silent continue:
 

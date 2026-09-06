@@ -4,14 +4,21 @@
    sync-outcome    {:project :paths #{path} :applied [..] :skipped [..]}
    release-outcome {:project :release-mode :version :tag}"
   (:require [bb-depsolve.version.api :as v]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.version.repos :as repos]))
 
 (defprotocol IArtifactRegistry
   "Read-only registry observations. Each method returns a Result."
   (published? [this lib version]
-    "=> Result of boolean: exactly VERSION of LIB resolves.")
+    "=> Result of boolean: exactly VERSION of LIB resolves somewhere.")
   (latest-version [this lib]
-    "=> Result of the highest resolvable version of LIB, or nil."))
+    "=> Result of the highest resolvable version of LIB, or nil.")
+  (published-versions [this lib]
+    "=> Result of [{:id :url :public? :kind :version}]: every version of LIB
+     each source lists, one entry per (source, version). :kind is :git for a
+     tag, :mvn for a Maven artifact on the registry :id names, :any for a
+     source that serves both. :public? and :url say which consumers can
+     reach it (bb-depsolve.version.repos/reachable?)."))
 
 (defprotocol IReleasePort
   "Effects of one cascade step. Each method returns a Result."
@@ -23,17 +30,47 @@
      :rolling, where the push mints the version.
      => Result of release-outcome."))
 
+(defn satisfies-consumer?
+  "True when some entry of PUBLISHED at VERSION is fetchable by CONSUMER
+   {:coord :repos}: a :git consumer needs a tag, a :mvn consumer needs a
+   Maven artifact on a registry its declared repos reach. Pure."
+  [published version {:keys [coord repos]}]
+  (boolean
+   (some (fn [{:keys [kind] :as entry}]
+           (and (= version (:version entry))
+                (or (= :any kind)
+                    (and (= :git coord) (= :git kind))
+                    (and (= :mvn coord) (= :mvn kind)
+                         (repos/reachable? (or repos []) entry)))))
+         published)))
+
 (defn await-satisfied?
   "=> Result of boolean: REGISTRY meets the await entry
-   {:lib :newer-than :expect}. With an :expect, that exact version must
-   resolve; without one, any version newer than :newer-than does."
-  [registry {:keys [lib newer-than expect]}]
-  (if expect
-    (published? registry lib expect)
-    (r/let-ok [latest (latest-version registry lib)]
-      (r/ok (boolean (and latest
-                          (or (nil? newer-than)
-                              (v/version-newer? newer-than latest))))))))
+   {:lib :newer-than :expect :reach}. With an :expect, that exact version
+   must resolve; without one, any version newer than :newer-than does.
+
+   With a :reach (how the plan's later consumers fetch the lib, as
+   [{:coord :repos}]), the version must be fetchable by EVERY consumer:
+   published anywhere is not published for a public consumer when only the
+   private registry has it. Without a :reach, any source counts."
+  [registry {:keys [lib newer-than expect reach]}]
+  (if (empty? reach)
+    (if expect
+      (published? registry lib expect)
+      (r/let-ok [latest (latest-version registry lib)]
+        (r/ok (boolean (and latest
+                            (or (nil? newer-than)
+                                (v/version-newer? newer-than latest)))))))
+    (r/let-ok [published (published-versions registry lib)]
+      (let [candidates (if expect
+                         #{(v/tag->mvn-version expect)}
+                         (into #{}
+                               (comp (map :version)
+                                     (filter #(or (nil? newer-than) (v/version-newer? newer-than %))))
+                               published))]
+        (r/ok (boolean (some (fn [version]
+                               (every? #(satisfies-consumer? published version %) reach))
+                             candidates)))))))
 
 ;; =============================================================================
 ;; In-memory adapter
@@ -105,7 +142,12 @@
 
   (latest-version [_ lib]
     (let [s (poll! state lib)]
-      (r/ok (last (sort v/version-compare (get-in s [:registry lib] #{})))))))
+      (r/ok (last (sort v/version-compare (get-in s [:registry lib] #{}))))))
+
+  (published-versions [_ lib]
+    (let [s (poll! state lib)]
+      (r/ok (mapv (fn [version] {:id "memory" :public? true :kind :any :version version})
+                  (sort v/version-compare (get-in s [:registry lib] #{})))))))
 
 (defn memory-port
   "In-memory IReleasePort + IArtifactRegistry.

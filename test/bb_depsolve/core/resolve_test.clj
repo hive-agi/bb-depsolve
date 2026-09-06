@@ -70,6 +70,20 @@
              (:error (registries/resolve-mvn-by-registry 'org.example/lib false)))
           "nothing answered, but the read was blind: not the same as unpublished"))))
 
+(deftest every-version-is-kept-per-registry-test
+  (with-redefs [auth/gitea-registry-url (constantly private-url)
+                auth/private-registry (constantly nil)
+                registries/resolve-clojars-versions (fn [& _] (r/ok #{"0.1.0" "0.1.1" "0.2.0-rc1"}))
+                registries/resolve-maven-versions (fn [& _] (r/err :io/unavailable))
+                registries/resolve-gitea-versions (fn [& _] (r/ok #{"0.1.1" "0.1.2"}))]
+    (is (= [{:id "clojars" :url clojars :public? true :versions #{"0.1.0" "0.1.1"}}
+            {:id "registry.example" :url private-url :public? false :versions #{"0.1.1" "0.1.2"}}]
+           (registries/resolve-mvn-versions-by-registry 'io.github.hive-agi/hive-carto false))
+        "a registry that did not answer contributes nothing; pre-releases are dropped")
+    (is (= #{"0.1.0" "0.1.1" "0.1.2"}
+           (registries/resolve-mvn-versions 'io.github.hive-agi/hive-carto false))
+        "the union is derived from the same reads")))
+
 (deftest resolve-mvn-latest-errs-when-every-registry-fails-test
   (testing "every registry answered, none lists it"
     (with-registries {}

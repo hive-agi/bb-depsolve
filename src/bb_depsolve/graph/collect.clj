@@ -96,7 +96,8 @@
 (defn collect-pins
   "Pins the DEP-FILES hold on libs published by NODES.
    Each pin carries :scope — :runtime for a top-level :deps coordinate, :alias
-   for one declared under an alias or bb task.
+   for one declared under an alias or bb task — and :repos, the `:mvn/repos`
+   its dep file declares, which is what the pinning project can fetch from.
    Coordinates naming an unknown lib are dropped; shadow-cljs files are skipped."
   [dep-files nodes]
   (let [by-lib (into {} (map (juxt (comp str :lib) :project)) nodes)]
@@ -104,15 +105,16 @@
          (remove discovery/shadow-deps-file?)
          (mapcat (fn [{:keys [path project]}]
                    (let [content (slurp path)
+                         repos (v/declared-repos content)
                          runtime (into #{} (map str) (v/runtime-libs content))
                          scope-of #(if (contains? runtime (str %)) :runtime :alias)]
                      (concat
                       (for [{:keys [lib tag]} (v/find-git-deps content)]
                         {:project project :lib lib :coord :git :version tag
-                         :path path :scope (scope-of lib)})
+                         :path path :scope (scope-of lib) :repos repos})
                       (for [{:keys [lib version]} (v/find-mvn-deps content)]
                         {:project project :lib lib :coord :mvn :version version
-                         :path path :scope (scope-of lib)})))))
+                         :path path :scope (scope-of lib) :repos repos})))))
          (keep (fn [{:keys [lib] :as pin}]
                  (when-let [dep (get by-lib (str lib))]
                    (assoc pin :dep dep))))

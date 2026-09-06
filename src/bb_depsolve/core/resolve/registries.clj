@@ -6,7 +6,7 @@
             [clojure.string :as str]
             [hive-dsl.result :as r]))
 
-(declare resolve-clojars-versions resolve-clojars-latest resolve-maven-versions resolve-maven-latest resolve-gitea-versions resolve-gitea-latest resolve-mvn-versions read-registry-latest resolve-mvn-reads resolve-mvn-by-registry resolve-mvn-latest)
+(declare split-lib registry-host resolve-clojars-versions resolve-clojars-latest resolve-maven-versions resolve-maven-latest resolve-gitea-versions resolve-gitea-latest resolve-mvn-versions-by-registry resolve-mvn-versions read-registry-latest resolve-mvn-reads resolve-mvn-by-registry resolve-mvn-latest)
 
 (def ^:private maven-central-base
   "Maven Central's repository root — the authoritative artifact listing."
@@ -164,22 +164,35 @@
                            {:group group :artifact artifact})))
        (throw (ex-info "Gitea HTTP error" {:status (:status resp)}))))))
 
+(defn resolve-mvn-versions-by-registry
+  "Every version each registry lists for LIB-SYM, kept per registry:
+   [{:id :url :public? :versions #{string}}], one entry per registry that
+   answered with at least one acceptable version. Pre-releases are dropped
+   unless ALLOW-PRE?. Clojars, Maven Central and the private registry (when
+   configured) are read; a registry that does not answer contributes nothing."
+  [lib-sym allow-pre?]
+  (let [[group artifact] (split-lib lib-sym)
+        private-url (auth/gitea-registry-url)
+        private-id (or (:id (auth/private-registry)) (registry-host private-url) "private")
+        acceptable (fn [result]
+                     (when (r/ok? result)
+                       (into #{} (filter #(or allow-pre? (not (v/pre-release? %)))) (:ok result))))
+        reads (cond-> [["clojars" clojars-repo-base true (resolve-clojars-versions group artifact)]
+                       ["central" maven-central-base true (resolve-maven-versions group artifact)]]
+                private-url (conj [private-id private-url false
+                                   (resolve-gitea-versions private-url group artifact)]))]
+    (vec (for [[id url public? result] reads
+               :let [versions (acceptable result)]
+               :when (seq versions)]
+           {:id id :url url :public? public? :versions versions}))))
+
 (defn resolve-mvn-versions
   "Union of every version LIB-SYM resolves to across the maven registries.
    Unreachable registries contribute nothing rather than failing the union.
-   Pre-releases are dropped unless ALLOW-PRE?. Returns #{string}."
+   Pre-releases are dropped unless ALLOW-PRE?. Returns #{string}. The
+   per-registry view is resolve-mvn-versions-by-registry."
   [lib-sym allow-pre?]
-  (let [[group artifact] (str/split (str lib-sym) #"/")
-        group (or group artifact)
-        artifact (or artifact group)
-        gitea-base (auth/gitea-registry-url)
-        results (cond-> [(resolve-clojars-versions group artifact)
-                         (resolve-maven-versions group artifact)]
-                  gitea-base (conj (resolve-gitea-versions gitea-base group artifact)))
-        versions (into #{} (comp (filter r/ok?) (mapcat :ok)) results)]
-    (if allow-pre?
-      versions
-      (into #{} (remove v/pre-release?) versions))))
+  (into #{} (mapcat :versions) (resolve-mvn-versions-by-registry lib-sym allow-pre?)))
 
 (defn- split-lib
   "[group artifact] of LIB-SYM; an unqualified name is both."

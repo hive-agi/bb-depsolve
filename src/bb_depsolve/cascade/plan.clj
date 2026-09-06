@@ -71,17 +71,19 @@
   "Pin updates PROJECT must take because its in-plan dependencies are released.
    DECIDED maps an already-planned project to its {:next-version ...}.
    :to is rendered in the pin's own coordinate shape and is nil when the
-   dependency's next version is not predictable."
+   dependency's next version is not predictable. :repos, when the pin knows
+   them, are the registries the pinning project can fetch from."
   [g project deps decided]
   (vec
    (for [dep (sort deps)
          pin (get-in g [:pins [project dep]])]
-     {:dep dep
-      :lib (or (get-in g [:nodes dep :lib]) (:lib pin))
-      :coord (:coord pin)
-      :path (:path pin)
-      :from (:version pin)
-      :to (coord-version (:coord pin) (get-in decided [dep :next-version]))})))
+     (cond-> {:dep dep
+              :lib (or (get-in g [:nodes dep :lib]) (:lib pin))
+              :coord (:coord pin)
+              :path (:path pin)
+              :from (:version pin)
+              :to (coord-version (:coord pin) (get-in decided [dep :next-version]))}
+       (:repos pin) (assoc :repos (:repos pin))))))
 
 (defn- wave-await
   "Await directive for the artifacts STEPS produce, under POLICY."
@@ -91,6 +93,37 @@
                       {:lib lib
                        :newer-than current-version
                        :expect next-version}))))
+
+(defn consumer-reach
+  "How the consumers in LATER-WAVES will fetch LIB: the distinct
+   {:coord :repos} of every pin-update on it, in wave order. Empty when
+   nothing later in the plan consumes it. Pure."
+  [lib later-waves]
+  (->> later-waves
+       (mapcat :steps)
+       (mapcat :pin-updates)
+       (filter #(= lib (:lib %)))
+       (map (fn [{:keys [coord repos]}]
+              (cond-> {:coord coord} repos (assoc :repos repos))))
+       distinct
+       vec))
+
+(defn with-reach
+  "WAVES with each await entry told how its consumers in later waves fetch
+   the artifact, so the executor waits for a publication those consumers can
+   actually use rather than for a publication anywhere. Pure."
+  [waves]
+  (let [waves (vec waves)]
+    (vec (map-indexed
+          (fn [i wave]
+            (let [later (subvec waves (inc i))]
+              (update-in wave [:await :libs]
+                         (fn [libs]
+                           (mapv (fn [{:keys [lib] :as entry}]
+                                   (let [reach (consumer-reach lib later)]
+                                     (cond-> entry (seq reach) (assoc :reach reach))))
+                                 libs)))))
+          waves))))
 
 (defn- plan-step
   [g seed-set rules requested wave-index decided project]
@@ -127,7 +160,8 @@
 
    Every wave contains only projects whose in-plan dependencies were released
    in an earlier wave. Projects on or behind a cycle are excluded, never
-   silently reordered. Returns the plan value."
+   silently reordered. Each wave's await names how later consumers fetch its
+   artifacts (:reach). Returns the plan value."
   ([g seeds] (plan-cascade g seeds {}))
   ([g seeds opts]
    (let [seed-set (set seeds)
@@ -147,7 +181,7 @@
          {:seeds seed-set
           :unknown-seeds (into (sorted-set) (remove known) seed-set)
           :policy {:requested-bump requested :await await-policy}
-          :waves acc
+          :waves (with-reach acc)
           :cycles (graph/cycles sub)
           :excluded (vec (for [p cyclic]
                            {:project p
