@@ -141,8 +141,30 @@
         await (:await (first (:waves plan)))]
     (is (= :wait (:mode await)))
     (is (= cas/default-await-timeout-ms (:timeout-ms await)))
-    (is (= [{:lib 'io.github.test/weave :newer-than "0.3.0" :expect "0.3.1"}]
-           (:libs await)))))
+    (is (= [{:lib 'io.github.test/weave :newer-than "0.3.0" :expect "0.3.1"
+             :reach [{:coord :mvn} {:coord :git}]}]
+           (:libs await))
+        "and it names how the later waves fetch it: system by Maven, carto by tag")
+    (is (nil? (:reach (first (:libs (:await (last (:waves plan)))))))
+        "the last wave has no later consumer to reach")))
+
+(deftest await-reach-carries-each-consumer-registries-test
+  (let [gitea [{:id "hive-gitea" :url "https://forge.example/m2"}]
+        graph (g/dep-graph [(node "weave" :pinned "0.3.0")
+                            (node "private-app" :pinned "0.2.8")
+                            (node "public-app" :pinned "1.0.0")]
+                           [(assoc (pin "private-app" "weave" :mvn "0.3.0") :repos gitea)
+                            (pin "public-app" "weave" :mvn "0.3.0")])
+        plan (cas/plan-cascade graph #{"weave"})
+        reach (:reach (first (get-in plan [:waves 0 :await :libs])))]
+    (is (= #{{:coord :mvn :repos gitea} {:coord :mvn}} (set reach))
+        "one entry per distinct way of fetching: the private consumer through its
+         registry, the public one through the defaults only")
+    (is (every? #(contains? #{{:coord :mvn :repos gitea} {:coord :mvn}} %)
+                (mapcat (fn [step] (map #(select-keys % [:coord :repos]) (:pin-updates step)))
+                        (get-in plan [:waves 1 :steps])))
+        "the pin-updates carry the repos the plan derived the reach from")
+    (is (sch/validate! :bb-depsolve/cascade-plan plan))))
 
 (deftest await-can-be-skipped-test
   (let [plan (cas/plan-cascade fleet #{"weave"} {:await {:mode :skip}})]

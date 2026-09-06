@@ -35,11 +35,19 @@
 (def gitea-registry-url auth/gitea-registry-url)
 (def resolve-gitea-latest registries/resolve-gitea-latest)
 (def resolve-mvn-latest registries/resolve-mvn-latest)
+
+(def resolve-mvn-by-registry registries/resolve-mvn-by-registry)
+
+(def resolve-mvn-reads registries/resolve-mvn-reads)
 (def discover-internal-libs sync/discover-internal-libs)
 (def compute-sync-changes sync/compute-sync-changes)
+
+(def compute-withheld sync/compute-withheld)
 (def apply-sync-changes! sync/apply-sync-changes!)
 (def apply-mvn-upgrades! upgrade/apply-mvn-upgrades!)
 (def sync-cmd sync/sync-cmd)
+
+(def parity-cmd sync/parity-cmd)
 (def upgrade-cmd upgrade/upgrade-cmd)
 (def report-cmd report/report-cmd)
 (def lint-cmd lint/lint-cmd)

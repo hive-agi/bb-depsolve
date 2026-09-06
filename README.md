@@ -50,6 +50,58 @@ bb -m bb-depsolve.cli.main sync --root . --org hive-agi
 bb -m bb-depsolve.cli.main sync --root . --org hive-agi --apply  # write changes
 ```
 
+A Maven version is resolved **per registry** (Clojars, Maven Central, and the private
+registry the workspace declares), and every pin is chosen from the registries the
+*pinning project itself* declares under `:mvn/repos`. A project with no private
+registry only ever moves to what Clojars or Central serves; a newer version that exists
+only privately is named on the row but never written:
+
+```
+  hive-mcp      io.github.hive-agi/hive-help   0.0.9 -> 0.1.0  (mvn via clojars)  hive-gitea has 0.1.1, not declared by this project
+  hive-carto    io.github.hive-agi/hive-help   0.1.0 -> 0.1.1  (mvn via hive-gitea)
+```
+
+A pin no declared registry can serve at any version is held back and reported, and a
+public lib whose private registry is ahead of the public one is reported as a registry
+parity finding (see `parity`) with the forge sync that fixes it.
+
+Only a registry that **answered** counts. A registry that did not (timeout, 5xx, or a
+401 on the private one) is reported as unread, and every pin that depends on it is
+held rather than moved: a blind read must never look like an absence. The `~/.m2`
+cache is not consulted, since a stale cache standing in for a registry is exactly how a
+plan full of downgrades gets written. For the same reason `--apply` refuses a plan in
+which any row moves a pin down, unless `--allow-downgrade` names that rollback as
+deliberate (for instance a public project pinned past what Clojars has).
+
+### `parity` — Public libs whose private registry is ahead
+
+Public consumers hold no credentials for the private registry, so a public lib
+(`version.edn` `:publish :clojars`) must have its newest version on Clojars. When the
+private registry is ahead, the repo was pushed to the private forge but not to GitHub,
+whose release CI publishes to Clojars. `parity` finds those libs and names the push:
+
+```bash
+bb-depsolve parity --root . --org hive-agi
+bb-depsolve parity --root . --org hive-agi --no-fail   # report without exiting 1
+```
+
+```
+Registry parity: 1 finding(s)
+  io.github.hive-agi/hive-help             clojars 0.1.0  <  hive-gitea 0.1.1
+      public consumers cannot fetch 0.1.1. Sync the forges: push the private state to GitHub so its release CI publishes it publicly:
+        git -C hive-help push origin HEAD:main
+```
+
+A lib is public when its `version.edn` says `:publish :clojars` **or** its checkout has a
+github.com remote: the publish target follows the hosting, so a GitHub-hosted repo that
+declares `:publish :none` is still flagged, with a note to fix the declaration.
+
+Two further kinds are reported without failing the run: a lib declared private
+(`:publish :gitea`) that a public registry lists, and a lib declared `:publish :none`
+that any registry lists. Both mean the declared target and the artifacts disagree.
+A registry that did not answer yields an `unread` finding, which fails the run too:
+parity cannot be certified from a blind read.
+
 ### `upgrade` — Upgrade mvn dependencies
 
 Checks Clojars and Maven Central for newer versions of all `:mvn/version` deps.
@@ -186,6 +238,12 @@ waiting on 2 of 3 artifact(s) — 34s elapsed
 On a terminal the block is redrawn in place; through a pipe each state change prints
 one line. Polling backs off from 2s to a 15s ceiling, bounded by `--await-timeout`.
 
+An artifact counts as published only when every consumer the plan re-pins in a later
+wave can fetch it: a consumer pinning by tag needs the tag, a consumer pinning by
+`:mvn/version` needs the artifact on a registry its own `:mvn/repos` reach. A version
+that exists only on the private registry does not release a wave whose consumers are
+public projects.
+
 `--no-wait` sets the plan's await mode to skip. A timeout is a loud failure naming
 every lib that never published — never a silent continue:
 
@@ -195,8 +253,9 @@ await timed out after 900s (limit 900s)
   re-run with --no-wait to plan past it.
 ```
 
-Versions are resolved across GitHub tags, Clojars, Maven Central and — when
-`MAVEN_URL` is set — the private Gitea Maven registry.
+Versions are resolved across GitHub tags, Clojars, Maven Central and the private Maven
+registry the workspace declares (a `:mvn/repos` entry whose id has credentials in
+`~/.m2/settings.xml`; `MAVEN_URL` + `MAVEN_USERNAME` + `MAVEN_TOKEN` override it).
 
 #### What an interrupted cascade reports
 

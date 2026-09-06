@@ -25,6 +25,14 @@
   [lib allow-pre?]
   (registries/resolve-mvn-versions lib allow-pre?))
 
+(defn registry-versions
+  "Every Maven artifact version of LIB, one entry per (registry, version),
+   each saying which consumers can reach it."
+  [lib allow-pre?]
+  (vec (for [{:keys [id url public? versions]} (registries/resolve-mvn-versions-by-registry lib allow-pre?)
+             version (sort v/version-compare versions)]
+         {:id id :url url :public? public? :kind :mvn :version version})))
+
 (defn known-versions
   "Versions of LIB observable from any source: semver git tags plus every
    version the maven registries enumerate."
@@ -38,12 +46,19 @@
                      (v/tag->mvn-version version))))
 
   (latest-version [_ lib]
-    (r/ok (last (sort v/version-compare (known-versions lib (:allow-pre? opts)))))))
+    (r/ok (last (sort v/version-compare (known-versions lib (:allow-pre? opts))))))
+
+  (published-versions [_ lib]
+    (r/ok (into (mapv (fn [version] {:id "git" :public? true :kind :git :version version})
+                      (sort v/version-compare (tag-versions lib)))
+                (registry-versions lib (:allow-pre? opts))))))
 
 (defn live-registry
-  "IArtifactRegistry backed by GitHub tags, Clojars, Maven Central and — when
-   MAVEN_URL is set — the private Gitea Maven registry.
+  "IArtifactRegistry backed by GitHub tags, Clojars, Maven Central and the
+   private Maven registry the workspace declares. `published-versions` keeps
+   the sources apart so an await can ask whether each consumer can actually
+   fetch the artifact.
 
-   OPTS: :allow-pre? include pre-release versions (default false)."
+   OPTS: :allow-pre? include pre-release versions (default false)"
   ([] (live-registry {}))
   ([opts] (->LiveRegistry opts)))

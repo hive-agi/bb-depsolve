@@ -3,7 +3,8 @@
   (:require [bb-depsolve.schema.api]
             [bb-depsolve.version.parse :as parse]
             [clojure.string :as str]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [bb-depsolve.version.semver :as semver]))
 
 (defn update-shadow-dep
   "Replace a dependency version in shadow-cljs.edn :dependencies vector.
@@ -95,7 +96,13 @@
 
 (defn sync-changes-in-content
   "Compute sync changes for a single dep file's CONTENT against RESOLVED
-   (map of lib-sym -> {:tag :sha :sha-short :mvn-version}). Pure: no I/O.
+   (map of lib-sym -> {:tag :sha :sha-short :mvn-version :mvn-source
+   :mvn-unreachable}). Pure: no I/O.
+
+   RESOLVED is expected to be the consumer's own projection (see
+   bb-depsolve.version.repos/project-resolved): :mvn-version is the newest
+   version THIS file can fetch, :mvn-source the registry it comes from, and
+   :mvn-unreachable any newer versions it cannot.
 
    Covers both coord styles:
      :git — {:git/tag :git/sha} drift (tag or sha mismatch)
@@ -103,7 +110,7 @@
 
    Returns vec of change maps, each carrying :coord (:git or :mvn):
      :git -> {:lib :coord :old-tag :old-sha :new-tag :new-sha}
-     :mvn -> {:lib :coord :old-version :new-version}"
+     :mvn -> {:lib :coord :old-version :new-version :source? :unreachable?}"
   [content resolved]
   (let [git-deps (parse/find-git-deps content)
         mvn-deps (parse/find-mvn-deps content)]
@@ -121,11 +128,25 @@
          :new-tag rtag :new-sha rsha})
       (for [{:keys [lib version]} mvn-deps
             :when (contains? resolved lib)
-            :let [resolved-info (get resolved lib)
-                  rversion (:mvn-version resolved-info)]
+            :let [{rversion :mvn-version
+                   source :mvn-source
+                   unreachable :mvn-unreachable} (get resolved lib)]
             :when (and rversion (not= version rversion))]
-        {:lib lib :coord :mvn
-         :old-version version :new-version rversion})))))
+        (cond-> {:lib lib :coord :mvn
+                 :old-version version :new-version rversion}
+          source (assoc :source source)
+          (seq unreachable) (assoc :unreachable unreachable)))))))
+
+(defn downgrade-change?
+  "True when a sync change moves a pin to an OLDER version. A registry that
+   answered stale or partial data produces exactly this shape, so a plan
+   carrying one deserves a second look before it is applied. Pure, total."
+  [{:keys [coord old-version new-version old-tag new-tag]}]
+  (boolean
+   (case coord
+     :mvn (semver/version-newer? new-version old-version)
+     :git (semver/version-newer? (semver/tag->mvn-version new-tag) (semver/tag->mvn-version old-tag))
+     false)))
 
 (m/=> sync-changes-in-content
       [:=> [:cat :string :bb-depsolve/resolved] :bb-depsolve/sync-changes])
