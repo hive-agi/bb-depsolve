@@ -27,10 +27,28 @@
        (sort)
        (vec)))
 
+(def ignored-dep-files
+  "Dep-file names that look like deps.edn but are not a committed dep file.
+
+   local.deps.edn is the sanctioned home for :local/root overrides, and
+   deps.lock.edn is generated output; scanning either would report the very
+   thing the convention asks for."
+  #{"local.deps.edn" "deps.lock.edn"})
+
+(defn variant-dep-file?
+  "True for a `deps.<name>.edn` sidecar, e.g. the deps.migrate.edn a Dockerfile
+   copies in as deps.edn. These ARE committed dep files and are linted.
+
+   Plain deps.edn is not one: it comes from the fixed name list, and reporting it
+   here too would double every hit."
+  [fname]
+  (and (re-matches #"deps\..+\.edn" fname)
+       (not (contains? ignored-dep-files fname))))
+
 (defn find-dep-files
-  "Find all deps.edn, bb.edn, and shadow-cljs.edn files in the workspace.
-   The root's own dep files are always included, so --root can point directly
-   AT a project, not only at the workspace container above it."
+  "Find all deps.edn, deps.<name>.edn, bb.edn, and shadow-cljs.edn files in the
+   workspace. The root's own dep files are always included, so --root can point
+   directly AT a project, not only at the workspace container above it."
   [{:keys [root skip-dirs depth]
     :or {root "." skip-dirs default-skip-dirs depth default-depth}}]
   (let [root-dir (str (fs/canonicalize root))
@@ -40,9 +58,17 @@
                                (filter fs/directory?)
                                (remove #(skip-path? root-dir skip-dirs %))
                                (sort)))
-                    [root-dir])]
+                    [root-dir])
+        names (fn [dir]
+                (->> (concat ["deps.edn" "bb.edn" "shadow-cljs.edn"]
+                             (when (fs/directory? dir)
+                               (->> (fs/list-dir dir)
+                                    (map (comp str fs/file-name))
+                                    (filter variant-dep-file?)
+                                    (sort))))
+                     (distinct)))]
     (->> (for [dir scan-dirs
-               fname ["deps.edn" "bb.edn" "shadow-cljs.edn"]
+               fname (names dir)
                :let [f (fs/path dir fname)]
                :when (fs/exists? f)]
            {:path    (str f)

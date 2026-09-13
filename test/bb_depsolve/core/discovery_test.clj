@@ -96,6 +96,28 @@
     (is (= #{"beta" "gamma" "delta" "vendor" (str (fs/file-name root))} projects)
         "an explicit skip set replaces the default — vendor comes back; root always included")))
 
+(deftest find-dep-files-reads-deps-variant-sidecars-test
+  (let [root (str (fs/create-temp-dir {:prefix "bb-depsolve-variant"}))]
+    (touch! root "svc" "deps.edn")
+    (touch! root "svc" "deps.migrate.edn")   ; committed, copied in as deps.edn by a Dockerfile
+    (touch! root "svc" "local.deps.edn")     ; the sanctioned override file
+    (touch! root "svc" "deps.lock.edn")      ; generated output
+    (let [found (set (names (map :path (disc/find-dep-files {:root root}))))]
+      (is (contains? found "deps.migrate.edn")
+          "a deps.<name>.edn sidecar is a committed dep file and must be linted")
+      (is (not (contains? found "local.deps.edn"))
+          "local.deps.edn is where :local/root belongs; scanning it would report the convention itself")
+      (is (not (contains? found "deps.lock.edn"))
+          "the lock file is generated output, not a hand-written pin"))))
+
+(deftest variant-dep-file?-test
+  (is (disc/variant-dep-file? "deps.migrate.edn"))
+  (is (disc/variant-dep-file? "deps.aot.edn"))
+  (is (not (disc/variant-dep-file? "local.deps.edn")))
+  (is (not (disc/variant-dep-file? "deps.lock.edn")))
+  (is (not (disc/variant-dep-file? "deps.edn")) "handled by the fixed name list")
+  (is (not (disc/variant-dep-file? "depsolve.edn"))))
+
 ;; =============================================================================
 ;; Unit — file-type dispatch
 ;; =============================================================================
