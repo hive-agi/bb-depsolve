@@ -257,15 +257,16 @@
   (println (ui/c :yellow (format "%d mismatches found:" (count changes))))
   (println)
   (doseq [{:keys [coord project lib old-tag old-sha new-tag new-sha
-                  old-version new-version source unreachable]} changes]
+                  old-version new-version source unreachable path]} changes
+          :let [dep-file (if (seq path) (.getName (java.io.File. path)) "-")]]
     (if (= coord :mvn)
-      (printf "  %-25s %-35s %s -> %s  (mvn%s)%s\n"
-              (ui/c :cyan project) (str lib)
+      (printf "  %-25s %-14s %-35s %s -> %s  (mvn%s)%s\n"
+              (ui/c :cyan project) dep-file (str lib)
               (ui/c :red old-version) (ui/c :green new-version)
               (if source (str " via " source) "")
               (unreachable-note unreachable))
-      (printf "  %-25s %-35s %s %s -> %s %s\n"
-              (ui/c :cyan project) (str lib)
+      (printf "  %-25s %-14s %-35s %s %s -> %s %s\n"
+              (ui/c :cyan project) dep-file (str lib)
               (ui/c :red old-tag) (ui/c :dim old-sha)
               (ui/c :green new-tag) (ui/c :dim new-sha))))
   (println)
