@@ -1,0 +1,50 @@
+{:git-deps-edn
+ {:project "bb-depsolve",
+  :dep-file "deps.edn",
+  :lib "io.github.hive-agi/hive-test",
+  :from "v0.4.3 aaaaaaa1a",
+  :to "v0.4.4 bbbbbb1b",
+  :note ""},
+ :git-bb-edn
+ {:project "bb-depsolve",
+  :dep-file "bb.edn",
+  :lib "io.github.hive-agi/hive-test",
+  :from "v0.4.3 aaaaaaa1a",
+  :to "v0.4.4 bbbbbb1b",
+  :note ""},
+ :mvn-with-source-unreachable
+ {:project "bb-depsolve",
+  :dep-file "deps.edn",
+  :lib "io.github.hive-agi/hive-dsl",
+  :from "0.5.23",
+  :to "0.5.24",
+  :note
+  "(mvn via :clojars)  :central has 0.5.25, not declared by this project"},
+ :mvn-without-source
+ {:project "bb-depsolve",
+  :dep-file "deps.edn",
+  :lib "io.github.hive-agi/hive-dsl",
+  :from "0.5.23",
+  :to "0.5.24",
+  :note "(mvn)"},
+ :nil-path
+ {:project "bb-depsolve",
+  :dep-file "-",
+  :lib "io.github.hive-agi/hive-test",
+  :from "v0.4.3 aaaaaaa",
+  :to "v0.4.4 bbbbbbb",
+  :note ""},
+ :blank-path
+ {:project "bb-depsolve",
+  :dep-file "-",
+  :lib "io.github.hive-agi/hive-test",
+  :from "v0.4.3 aaaaaaa",
+  :to "v0.4.4 bbbbbbb",
+  :note ""},
+ :nested-deps-edn
+ {:project "bb-depsolve",
+  :dep-file "deps.edn",
+  :lib "io.github.hive-agi/hive-test",
+  :from "v0.4.3 aaaaaaa1a",
+  :to "v0.4.4 bbbbbb1b",
+  :note ""}}

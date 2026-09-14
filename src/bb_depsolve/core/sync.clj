@@ -240,15 +240,44 @@
                                 " or pin a public release")))))
     (println)))
 
-(defn- unreachable-note
-  "Trailing note for a change whose lib has newer versions the project cannot
-   fetch; empty when there are none."
-  [unreachable]
-  (if (seq unreachable)
-    (ui/c :yellow (str "  "
-                       (str/join ", " (map #(str (:id %) " has " (:version %)) unreachable))
-                       ", not declared by this project"))
-    ""))
+(defn dep-file-label
+  "File name of PATH, or `-` when PATH is nil or blank."
+  [path]
+  (if (and path (seq (str/trim path)))
+    (fs/file-name path)
+    "-"))
+
+(defmulti row-cells
+  "Cells for one row of the sync table, dispatched on :coord.
+   Returns {:from str :to str :note str}."
+  :coord)
+
+(defmethod row-cells :mvn
+  [{:keys [old-version new-version source unreachable]}]
+  (let [mvn-str (str "(mvn" (when source (str " via " source)) ")")
+        unreachable-str (when (seq unreachable)
+                          (str "  "
+                               (str/join ", " (map #(str (:id %) " has " (:version %)) unreachable))
+                               ", not declared by this project"))]
+    {:from old-version :to new-version :note (str mvn-str (or unreachable-str ""))}))
+
+(defmethod row-cells :default
+  [{:keys [old-tag old-sha new-tag new-sha]}]
+  {:from (str old-tag " " (or old-sha ""))
+   :to (str new-tag " " (or new-sha ""))
+   :note ""})
+
+(defn mismatch-row
+  "Plain row map from a sync change: {:project :dep-file :lib :from :to :note}
+   where every value is a plain string with no ANSI codes."
+  [change]
+  (let [cells (row-cells change)]
+    {:project (str (:project change))
+     :dep-file (dep-file-label (:path change))
+     :lib (str (:lib change))
+     :from (:from cells)
+     :to (:to cells)
+     :note (:note cells)}))
 
 (defn- print-changes!
   "The mismatch table, and a warning for rows that move a pin DOWN. Action:
@@ -256,18 +285,19 @@
   [changes]
   (println (ui/c :yellow (format "%d mismatches found:" (count changes))))
   (println)
-  (doseq [{:keys [coord project lib old-tag old-sha new-tag new-sha
-                  old-version new-version source unreachable]} changes]
-    (if (= coord :mvn)
-      (printf "  %-25s %-35s %s -> %s  (mvn%s)%s\n"
-              (ui/c :cyan project) (str lib)
-              (ui/c :red old-version) (ui/c :green new-version)
-              (if source (str " via " source) "")
-              (unreachable-note unreachable))
-      (printf "  %-25s %-35s %s %s -> %s %s\n"
-              (ui/c :cyan project) (str lib)
-              (ui/c :red old-tag) (ui/c :dim old-sha)
-              (ui/c :green new-tag) (ui/c :dim new-sha))))
+  (doseq [change changes
+          :let [row (mismatch-row change)]]
+    (if (= :mvn (:coord change))
+      (printf "  %-25s %-14s %-35s %s -> %s %s\n"
+              (ui/c :cyan (:project row)) (:dep-file row) (:lib row)
+              (ui/c :red (:from row)) (ui/c :green (:to row))
+              (ui/c :dim (:note row)))
+      (let [[otag osha] (str/split (:from row) #" " 2)
+            [ntag nsha] (str/split (:to row) #" " 2)]
+        (printf "  %-25s %-14s %-35s %s %s -> %s %s\n"
+                (ui/c :cyan (:project row)) (:dep-file row) (:lib row)
+                (ui/c :red (or otag "")) (ui/c :dim (or osha ""))
+                (ui/c :green (or ntag "")) (ui/c :dim (or nsha ""))))))
   (println)
   (let [downgrades (count (filter v/downgrade-change? changes))]
     (when (pos? downgrades)
