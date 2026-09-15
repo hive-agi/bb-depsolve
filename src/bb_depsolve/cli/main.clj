@@ -81,6 +81,8 @@
   (cli/dispatch dispatch-table args
                 {:coerce {:apply :boolean
                           :allow-downgrade :boolean
+                          :allow-major :boolean
+                          :all :boolean
                           :fix :boolean
                           :pre-release :boolean
                           :conflicts-only :boolean
@@ -102,5 +104,7 @@
                           :from :string
                           :to :string
                           :lib :string
+                          :only :string
+                          :exclude :string
                           :format :string
                           :extra :string}}))

@@ -4,6 +4,7 @@
    runs either on paths that resolve zero libraries or over an injected memory
    resolver, so no registry is contacted."
   (:require [babashka.fs :as fs]
+            [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.core.resolver :as resolver]
             [bb-depsolve.core.upgrade :as upgrade]
             [clojure.string :as str]
@@ -132,17 +133,178 @@
     (is (= #{'acme/lib 'other/lib 'gone/lib} (set (map second @(:calls res))))
         "each unique lib is resolved")))
 
-(deftest upgrade-cmd-apply-writes-the-selected-upgrades-test
-  (testing "with no TTY every upgrade is applied"
+(deftest upgrade-cmd-apply-writes-the-picked-upgrades-test
+  (testing "an interactive pick applies exactly the chosen libs"
     (let [root (workspace [alpha])
           deps (str (fs/path root "alpha" "deps.edn"))
-          out (run-with (resolver/memory-resolver {:latest latest})
-                        {:root root :apply true})]
-      (is (str/includes? out "No TTY"))
+          out (with-redefs [ui/gum-filter (fn [choices _] (vec choices))]
+                (run-with (resolver/memory-resolver {:latest latest})
+                          {:root root :apply true}))]
+      (is (str/includes? out "Applied 1 upgrades across 1 files."))
       (is (str/includes? (slurp deps) "acme/lib {:mvn/version \"1.2.0\"}"))
       (is (str/includes? (slurp deps) "other/lib {:mvn/version \"2.0.0\"}"))
       (is (str/includes? (slurp deps) "gone/lib {:mvn/version \"1.0.0\"}")
           "an unresolved lib is left alone"))))
+
+(deftest upgrade-cmd-apply-selecting-nothing-writes-nothing-test
+  (let [root (workspace [alpha])
+        deps (str (fs/path root "alpha" "deps.edn"))
+        before (slurp deps)
+        out (with-redefs [ui/gum-filter (fn [_ _] [])]
+              (run-with (resolver/memory-resolver {:latest latest})
+                        {:root root :apply true}))]
+    (is (str/includes? out "No upgrades selected."))
+    (is (= before (slurp deps)))))
+
+;; =============================================================================
+;; The guard: no-TTY refusal, lib filters, held jumps, per-consumer registries
+;; =============================================================================
+
+(defn- no-tty
+  "Run F with `ui/gum-filter` answering the way it does with no TTY, recording
+   every exit code the command asks for. => [printed-output exit-codes]"
+  [f]
+  (let [exits (atom [])
+        out (with-redefs [ui/gum-filter (fn [_ _] nil)]
+              (binding [upgrade/*exit!* (fn [code] (swap! exits conj code))]
+                (strip-ansi (with-out-str (f)))))]
+    [out @exits]))
+
+(defn- run-no-tty
+  [res opts]
+  (no-tty #(upgrade/upgrade-cmd res {:opts opts})))
+
+(deftest upgrade-cmd-apply-refuses-without-a-tty-or-a-selection-test
+  (let [root (workspace [alpha])
+        deps (str (fs/path root "alpha" "deps.edn"))
+        before (slurp deps)
+        [out exits] (run-no-tty (resolver/memory-resolver {:latest latest})
+                                {:root root :apply true})]
+    (is (str/includes? out "Refusing --apply"))
+    (is (str/includes? out "--all") "the refusal names the flags that release it")
+    (is (str/includes? out "--only"))
+    (is (= [1] exits) "the refusal exits non-zero")
+    (is (= before (slurp deps)) "a refused apply writes nothing")))
+
+(deftest upgrade-cmd-all-applies-every-listed-upgrade-without-a-tty-test
+  (let [root (workspace [alpha])
+        deps (str (fs/path root "alpha" "deps.edn"))
+        [out exits] (run-no-tty (resolver/memory-resolver {:latest latest})
+                                {:root root :apply true :all true})]
+    (is (= [] exits))
+    (is (str/includes? out "Applied 1 upgrades across 1 files."))
+    (is (str/includes? (slurp deps) "acme/lib {:mvn/version \"1.2.0\"}"))))
+
+(def ^:private two-upgrades
+  {'acme/lib  [{:id "clojars" :public? true :version "1.2.0"}]
+   'other/lib [{:id "clojars" :public? true :version "2.1.0"}]})
+
+(deftest upgrade-cmd-only-names-the-selection-without-a-tty-test
+  (let [root (workspace [alpha])
+        deps (str (fs/path root "alpha" "deps.edn"))
+        [out exits] (run-no-tty (resolver/memory-resolver {:latest two-upgrades})
+                                {:root root :apply true :only "acme/lib"})]
+    (is (= [] exits) "an explicit selection needs no TTY")
+    (is (str/includes? out "dropped by --only / --exclude"))
+    (is (str/includes? (slurp deps) "acme/lib {:mvn/version \"1.2.0\"}"))
+    (is (str/includes? (slurp deps) "other/lib {:mvn/version \"2.0.0\"}")
+        "a lib --only did not name is left alone")))
+
+(deftest upgrade-cmd-exclude-drops-a-lib-test
+  (let [root (workspace [alpha])
+        deps (str (fs/path root "alpha" "deps.edn"))
+        [out _] (run-no-tty (resolver/memory-resolver {:latest two-upgrades})
+                            {:root root :apply true :all true :exclude "acme/lib"})]
+    (is (not (str/includes? out "acme/lib")))
+    (is (str/includes? (slurp deps) "acme/lib {:mvn/version \"1.0.0\"}")
+        "an excluded lib is never resolved nor written")
+    (is (str/includes? (slurp deps) "other/lib {:mvn/version \"2.1.0\"}"))))
+
+(def ^:private jumps
+  ["big" "deps.edn" (str "{:deps {tika/core {:mvn/version \"3.3.2\"}\n"
+                         "        raster/raster {:mvn/version \"0.2.318\"}}}")])
+
+(def ^:private jump-latest
+  {'tika/core     [{:id "clojars" :public? true :version "4.0.0"}]
+   'raster/raster [{:id "clojars" :public? true :version "0.4.1"}]})
+
+(deftest upgrade-cmd-holds-majors-and-pre-1-0-minor-jumps-test
+  (let [root (workspace [jumps])
+        deps (str (fs/path root "big" "deps.edn"))
+        before (slurp deps)
+        [out _] (run-no-tty (resolver/memory-resolver {:latest jump-latest})
+                            {:root root :apply true :all true})]
+    (is (str/includes? out "2 upgrade(s) HELD"))
+    (is (re-find #"tika/core\s+3\.3\.2 -> 4\.0\.0\s+major" out) "held ones are listed")
+    (is (re-find #"raster/raster\s+0\.2\.318 -> 0\.4\.1\s+major" out))
+    (is (str/includes? out "every candidate was held"))
+    (is (= before (slurp deps)) "a held jump is never written"))
+  (testing "--allow-major releases them"
+    (let [root (workspace [jumps])
+          deps (str (fs/path root "big" "deps.edn"))
+          [out _] (run-no-tty (resolver/memory-resolver {:latest jump-latest})
+                              {:root root :apply true :all true :allow-major true})]
+      (is (not (str/includes? out "HELD")))
+      (is (str/includes? (slurp deps) "tika/core {:mvn/version \"4.0.0\"}"))
+      (is (str/includes? (slurp deps) "raster/raster {:mvn/version \"0.4.1\"}")))))
+
+(def ^:private internal-and-external
+  ["core" "deps.edn" (str "{:deps {io.github.hive-agi/hive-dsl {:mvn/version \"0.5.24\"}\n"
+                          "        acme/lib {:mvn/version \"1.0.0\"}}}")])
+
+(deftest upgrade-cmd-leaves-the-internal-org-to-sync-test
+  (let [root (workspace [internal-and-external])
+        deps (str (fs/path root "core" "deps.edn"))
+        res (resolver/memory-resolver
+             {:latest (assoc two-upgrades
+                             'io.github.hive-agi/hive-dsl
+                             [{:id "clojars" :public? true :version "0.5.27"}])})
+        [out _] (run-no-tty res {:root root :apply true :all true})]
+    (is (str/includes? out "1 internal library(ies) left to `sync`"))
+    (is (= #{'acme/lib} (set (map second @(:calls res))))
+        "an internal lib is not even resolved")
+    (is (str/includes? (slurp deps) "io.github.hive-agi/hive-dsl {:mvn/version \"0.5.24\"}"))
+    (is (str/includes? (slurp deps) "acme/lib {:mvn/version \"1.2.0\"}"))))
+
+(def ^:private gitea-url "https://git.example.com/api/packages/acme/maven")
+
+(def ^:private split-latest
+  {'acme/lib [{:id "clojars" :url "https://repo.clojars.org/" :public? true :version "1.1.0"}
+              {:id "gitea" :url gitea-url :public? false :version "1.2.0"}]})
+
+(deftest upgrade-cmd-pins-each-consumer-to-its-own-registries-test
+  (let [root (workspace
+              [["pub" "deps.edn" "{:deps {acme/lib {:mvn/version \"1.0.0\"}}}"]
+               ["priv" "deps.edn" (str "{:mvn/repos {\"gitea\" {:url \"" gitea-url "\"}}\n"
+                                       " :deps {acme/lib {:mvn/version \"1.0.0\"}}}")]])
+        pub (str (fs/path root "pub" "deps.edn"))
+        priv (str (fs/path root "priv" "deps.edn"))
+        [_ exits] (run-no-tty (resolver/memory-resolver {:latest split-latest})
+                              {:root root :apply true :all true})]
+    (is (= [] exits))
+    (is (str/includes? (slurp pub) "acme/lib {:mvn/version \"1.1.0\"}")
+        "a public-only project stops at the version Clojars serves")
+    (is (str/includes? (slurp priv) "acme/lib {:mvn/version \"1.2.0\"}")
+        "the project declaring the private registry gets its version")))
+
+(deftest upgrade-cmd-names-a-version-the-consumer-cannot-fetch-test
+  (let [root (workspace [["pub" "deps.edn" "{:deps {acme/lib {:mvn/version \"1.1.0\"}}}"]])
+        deps (str (fs/path root "pub" "deps.edn"))
+        before (slurp deps)
+        [out _] (run-no-tty (resolver/memory-resolver {:latest split-latest})
+                            {:root root :apply true :all true})]
+    (is (re-find #"acme/lib\s+1\.1\.0 -> 1\.2\.0\s+only on registry gitea" out))
+    (is (= before (slurp deps)))))
+
+(deftest upgrade-cmd-refuses-a-downgrade-test
+  (let [root (workspace [["pub" "deps.edn" "{:deps {acme/lib {:mvn/version \"1.2.0\"}}}"]])
+        deps (str (fs/path root "pub" "deps.edn"))
+        before (slurp deps)
+        [out _] (run-no-tty (resolver/memory-resolver {:latest split-latest})
+                            {:root root :apply true :all true :allow-major true})]
+    (is (re-find #"acme/lib\s+1\.2\.0 -> 1\.1\.0\s+refused: moves the pin DOWN" out)
+        "the newest version the consumer can reach is older than its pin")
+    (is (= before (slurp deps)) "--all never writes a downgrade")))
 
 (deftest resolve-latest-selection-is-injectable-test
   (let [res (resolver/memory-resolver

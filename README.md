@@ -104,13 +104,35 @@ parity cannot be certified from a blind read.
 
 ### `upgrade` — Upgrade mvn dependencies
 
-Checks Clojars and Maven Central for newer versions of all `:mvn/version` deps.
+Checks Clojars, Maven Central and the private registry for newer versions of all
+`:mvn/version` deps. Each candidate is projected through the **consuming** dep
+file's own `:mvn/repos` (the same projection `sync` pins with), so a project is
+never moved to a version its registries cannot serve, and a row that would move a
+pin DOWN is held rather than written.
 
 ```bash
 bb -m bb-depsolve.cli.main upgrade --root .
-bb -m bb-depsolve.cli.main upgrade --root . --apply         # interactive selection
-bb -m bb-depsolve.cli.main upgrade --root . --pre-release    # include alpha/beta/rc
+bb -m bb-depsolve.cli.main upgrade --root . --apply                       # interactive selection
+bb -m bb-depsolve.cli.main upgrade --root . --apply --all                 # apply everything listed
+bb -m bb-depsolve.cli.main upgrade --root . --apply --only cheshire/cheshire,org.apache.tika/tika-core
+bb -m bb-depsolve.cli.main upgrade --root . --exclude org.apache.tika/tika-core
+bb -m bb-depsolve.cli.main upgrade --root . --allow-major                 # release held majors
+bb -m bb-depsolve.cli.main upgrade --root . --pre-release                 # include alpha/beta/rc
 ```
+
+Held by default, and listed with their reason:
+
+- **major / pre-1.0 minor jumps** (`3.3.2 -> 4.0.0`, `0.2.x -> 0.4.x`), released by `--allow-major`;
+- **downgrades**: a pin the consumer's registries cannot match at its current version;
+- **versions only a registry the project does not declare holds**, named with that registry.
+
+Internal `io.github.<org>/*` libs (`--org`, default `hive-agi`) are left to `sync`,
+which resolves them per coordinate kind.
+
+`--apply` without a TTY **refuses to write** unless `--all` or `--only <csv>` names
+the selection: an agent shell has no interactive picker, and "no selection" must
+not mean "everything".
+
 
 ### `lint` — Detect dep anti-patterns
 
@@ -278,6 +300,11 @@ unless forced.
 | `--apply` | `false` | Write changes (default: dry-run) |
 | `--fix` | `false` | Auto-fix lint issues (split `:local/root` into `local.deps.edn`) |
 | `--pre-release` | `false` | Include pre-release versions in `upgrade` |
+| `--only <csv>` | (none) | `upgrade` only these libs (qualified names) |
+| `--exclude <csv>` | (none) | Never `upgrade` these libs |
+| `--allow-major` | `false` | Release the majors and pre-1.0 minor jumps `upgrade` holds |
+| `--all` | `false` | Apply every listed `upgrade` without an interactive pick |
+| `--allow-downgrade` | `false` | Let `sync --apply` write rows that move a pin down |
 | `--major` | `false` | Bump major version |
 | `--minor` | `false` | Bump minor version |
 | `--stable` | `false` | Bump major version (the 1.0 promotion) |
@@ -291,7 +318,7 @@ unless forced.
 
 ## TUI
 
-When running in an interactive terminal with [gum](https://github.com/charmbracelet/gum) available, `upgrade --apply` shows an interactive multi-select for choosing which deps to upgrade. Falls back to plain text in non-TTY environments.
+When running in an interactive terminal with [gum](https://github.com/charmbracelet/gum) available, `upgrade --apply` shows an interactive multi-select for choosing which deps to upgrade. Without a TTY there is no picker, so `--apply` refuses to write unless `--all` or `--only <csv>` names the selection.
 
 ## License
 

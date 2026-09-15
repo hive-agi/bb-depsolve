@@ -160,9 +160,13 @@
                                    (get @tally :conflicted 0) (get @tally :failed 0)))))))
 
 (defn release-wave-cmd
-  "Full workspace release: upgrade → lint → sync → bump → re-sync → push."
+  "Full workspace release: upgrade → lint → sync → bump → re-sync → push.
+
+   The upgrade phase inherits --all / --only / --exclude / --allow-major: with
+   none of them and no TTY it refuses to write, so a wave never applies an
+   unreviewed bump."
   [{:keys [opts]}]
-  (let [{:keys [root org apply skip-dirs depth]
+  (let [{:keys [root org apply skip-dirs depth all only exclude allow-major]
          :or {root "." depth discovery/default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -191,7 +195,10 @@
       ;; Phase 1: Upgrade external deps
       (println (ui/c :bold "═══ Phase 1: Upgrading external deps ═══"))
       (println)
-      (upgrade/upgrade-cmd {:opts (assoc base-opts :apply true :commit true)})
+      (upgrade/upgrade-cmd {:opts (assoc base-opts
+                                         :apply true :commit true
+                                         :all all :only only :exclude exclude
+                                         :allow-major allow-major)})
       (println)
 
       ;; Phase 2: Lint + fix
