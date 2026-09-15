@@ -11,24 +11,42 @@
 
 (def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
 
-(defn- gated-get
-  "GET URL under the shared HTTP gate, carrying the credentials registered for
-   TARGET. Returns the raw http response map. Throws when the gate itself
-   refuses (timeout / execution failure) so the enclosing `try-effect*` reports
-   it as an error Result rather than mistaking it for a missing artifact."
-  [url target]
-  (let [headers (auth/auth-headers target)
-        res (gate/gate-run http-gate
-              (fn [] (http/get url (merge {:throw false}
+(defprotocol IHttpTransport
+  "GET for artifact retrieval."
+  (http-get [this url target]
+    "=> the raw http response map for URL, sent with the credentials
+     registered for TARGET (:clojars, :maven, :github, :none, ...). Throws
+     when the request could not be made at all."))
+
+(defrecord GatedHttp [gate get-fn headers-fn]
+  IHttpTransport
+  (http-get [_ url target]
+    (let [headers (headers-fn target)
+          res (gate/gate-run gate
+                (fn [] (get-fn url (merge {:throw false}
                                           (when (seq headers) {:headers headers})))))]
-    (if (r/ok? res)
-      (:ok res)
-      (throw (ex-info "gated HTTP request failed" res)))))
+      (if (r/ok? res)
+        (:ok res)
+        (throw (ex-info "gated HTTP request failed" res))))))
+
+(defn gated-http
+  "IHttpTransport that runs every GET under the shared HTTP gate. A gate
+   refusal (timeout / execution failure) throws, so the enclosing
+   `try-effect*` reports an error Result rather than a missing artifact.
+
+   OPTS:
+     :get-fn      (fn [url opts] response)  default babashka.http-client/get
+     :headers-fn  (fn [target] headers)     default bb-depsolve.core.auth/auth-headers"
+  ([] (gated-http {}))
+  ([{:keys [get-fn headers-fn]}]
+   (->GatedHttp http-gate
+                (or get-fn (fn [url opts] (http/get url opts)))
+                (or headers-fn (fn [target] (auth/auth-headers target))))))
 
 (defn- fetch-pom-xml
-  "Fetch POM XML from a URL. Returns Result<string>.
+  "Fetch POM XML from a URL over TRANSPORT. Returns Result<string>.
    Selects auth headers by URL prefix (clojars vs maven)."
-  [url]
+  [transport url]
   (r/try-effect*
    :io/fetch-pom
    (let [target (cond
@@ -36,7 +54,7 @@
                   (str/includes? url "maven.org")      :maven
                   (str/includes? url "repo1.maven")    :maven
                   :else                                 :none)
-         resp (gated-get url target)]
+         resp (http-get transport url target)]
      (if (= 200 (:status resp))
        (:body resp)
        (throw (ex-info "POM not found" {:url url :status (:status resp)}))))))
@@ -57,32 +75,37 @@
    AFTER POM parsing (see bb-depsolve.version.api/filter-resolved-coords). Dropped
    coords are logged via `warn-unresolved-coord` (not silently swallowed).
    Returns Result<[{:lib :version}]>, schema-validated at this boundary
-   (fail-loud)."
-  [group-id artifact-id version]
-  (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
-        pom-xml (let [r1 (fetch-pom-xml clojars-url)]
-                  (if (r/ok? r1) r1 (fetch-pom-xml maven-url)))
-        parent  {:group group-id :artifact artifact-id :version version}
-        warn-fn (partial warn-unresolved-coord parent)
-        filter-step (fn [coords] (v/filter-resolved-coords coords warn-fn))
-        validate-step (fn [coords] (sch/validate! :bb-depsolve/pom-deps coords))]
-    (r/ok-> pom-xml
-            v/parse-pom-deps-raw
-            filter-step
-            validate-step)))
+   (fail-loud). TRANSPORT defaults to `gated-http`."
+  ([group-id artifact-id version]
+   (fetch-pom-deps (gated-http) group-id artifact-id version))
+  ([transport group-id artifact-id version]
+   (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
+         pom-xml (let [r1 (fetch-pom-xml transport clojars-url)]
+                   (if (r/ok? r1) r1 (fetch-pom-xml transport maven-url)))
+         parent  {:group group-id :artifact artifact-id :version version}
+         warn-fn (partial warn-unresolved-coord parent)
+         filter-step (fn [coords] (v/filter-resolved-coords coords warn-fn))
+         validate-step (fn [coords] (sch/validate! :bb-depsolve/pom-deps coords))]
+     (r/ok-> pom-xml
+             v/parse-pom-deps-raw
+             filter-step
+             validate-step))))
 
 (defn fetch-git-deps-edn
-  "Fetch raw deps.edn content from a forge. Returns Result<string>.
-   Uses bb-depsolve.version.api/forge-raw-url to pick the per-forge URL shape and
-   bb-depsolve.core.auth/auth-headers to attach private-registry creds."
+  "Fetch raw deps.edn content from a forge (default :github). Returns
+   Result<string>. Uses bb-depsolve.version.api/forge-raw-url to pick the
+   per-forge URL shape; TRANSPORT (default `gated-http`) attaches the FORGE's
+   credentials."
   ([org repo tag]
    (fetch-git-deps-edn :github org repo tag))
   ([forge org repo tag]
+   (fetch-git-deps-edn (gated-http) forge org repo tag))
+  ([transport forge org repo tag]
    (r/try-effect*
     :io/fetch-git-deps
     (let [url (or (v/forge-raw-url forge org repo tag "deps.edn")
                   (throw (ex-info "Unsupported forge" {:forge forge})))
-          resp (gated-get url forge)]
+          resp (http-get transport url forge)]
       (if (= 200 (:status resp))
         (:body resp)
         (throw (ex-info "deps.edn not found"
@@ -90,8 +113,10 @@
                          :status (:status resp)})))))))
 
 (defn fetch-git-dep-coords
-  "Fetch deps.edn from GitHub raw content for a git dep.
-   Returns Result<[{:lib :version :type}]>."
-  [org repo tag]
-  (r/ok-> (fetch-git-deps-edn org repo tag)
-          v/deps-edn->dep-coords))
+  "Fetch deps.edn from GitHub raw content for a git dep over TRANSPORT
+   (default `gated-http`). Returns Result<[{:lib :version :type}]>."
+  ([org repo tag]
+   (fetch-git-dep-coords (gated-http) org repo tag))
+  ([transport org repo tag]
+   (r/ok-> (fetch-git-deps-edn transport :github org repo tag)
+           v/deps-edn->dep-coords)))
