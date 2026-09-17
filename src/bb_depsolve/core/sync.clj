@@ -280,24 +280,28 @@
      :note (:note cells)}))
 
 (defn- print-changes!
-  "The mismatch table, and a warning for rows that move a pin DOWN. Action:
-   prints."
+  "The mismatch table, and a warning for rows that move a pin DOWN. A row the
+   plan holds more than once (the same lib pinned at several places in one
+   file) prints once with its count. Action: prints."
   [changes]
   (println (ui/c :yellow (format "%d mismatches found:" (count changes))))
   (println)
-  (doseq [change changes
-          :let [row (mismatch-row change)]]
-    (if (= :mvn (:coord change))
-      (printf "  %-25s %-14s %-35s %s -> %s %s\n"
-              (ui/c :cyan (:project row)) (:dep-file row) (:lib row)
-              (ui/c :red (:from row)) (ui/c :green (:to row))
-              (ui/c :dim (:note row)))
-      (let [[otag osha] (str/split (:from row) #" " 2)
-            [ntag nsha] (str/split (:to row) #" " 2)]
-        (printf "  %-25s %-14s %-35s %s %s -> %s %s\n"
+  (let [times (frequencies changes)]
+    (doseq [change (distinct changes)
+            :let [row   (mismatch-row change)
+                  count (get times change 1)
+                  tail  (if (> count 1) (ui/c :dim (str "  ×" count)) "")]]
+      (if (= :mvn (:coord change))
+        (printf "  %-25s %-14s %-35s %s -> %s %s%s\n"
                 (ui/c :cyan (:project row)) (:dep-file row) (:lib row)
-                (ui/c :red (or otag "")) (ui/c :dim (or osha ""))
-                (ui/c :green (or ntag "")) (ui/c :dim (or nsha ""))))))
+                (ui/c :red (:from row)) (ui/c :green (:to row))
+                (ui/c :dim (:note row)) tail)
+        (let [[otag osha] (str/split (:from row) #" " 2)
+              [ntag nsha] (str/split (:to row) #" " 2)]
+          (printf "  %-25s %-14s %-35s %s %s -> %s %s%s\n"
+                  (ui/c :cyan (:project row)) (:dep-file row) (:lib row)
+                  (ui/c :red (or otag "")) (ui/c :dim (or osha ""))
+                  (ui/c :green (or ntag "")) (ui/c :dim (or nsha "")) tail)))))
   (println)
   (let [downgrades (count (filter v/downgrade-change? changes))]
     (when (pos? downgrades)
@@ -312,7 +316,8 @@
    version only the private registry holds; that divergence is reported as a
    registry-parity finding instead, with the forge sync that fixes it. A
    registry that did not answer holds the pins that depend on it, and
-   --apply refuses a plan that moves any pin down unless --allow-downgrade."
+   --apply refuses a plan that moves any pin down unless --allow-downgrade.
+   --commit commits exactly the files --apply changed, one commit per project."
   [{:keys [opts]}]
   (let [{:keys [apply commit allow-downgrade]} opts
         {:keys [root-dir dep-files internal-libs org]} (workspace opts)]
@@ -342,9 +347,13 @@
 
               :else
               (do (apply-sync-changes! root-dir changes)
-                  (when commit
-                    (git/auto-commit-workspace! root-dir dep-files
-                                            "chore: sync internal deps (bb-depsolve)"))))))))))
+                  (if commit
+                    (git/commit-paths! root-dir
+                                       (reduce (fn [m {:keys [project path]}]
+                                                 (update m project (fnil conj #{}) path))
+                                               {} changes)
+                                       (format "chore(deps): sync %s internal coords" org))
+                    (println (ui/c :dim "  Pass --commit to commit these, one commit per project.")))))))))))
 
 (defn parity-cmd
   "Report libs whose declared publish target disagrees with where their

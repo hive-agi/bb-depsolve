@@ -77,6 +77,48 @@
   (testing "a directory that is not a repo has no remote"
     (is (false? (git/git-has-remote? (str (fs/create-temp-dir)))))))
 
+(deftest git-push!-answers-the-branch-and-the-tags-separately-test
+  (testing "a tag the remote already holds elsewhere refuses the tag push, not the branch push"
+    (let [{:keys [dir] :as s} (scratch)
+          peer (push-from-peer! s "peer.txt" "peer\n")]
+      (git! peer "tag" "v1")
+      (git! peer "push" "origin" "v1")
+      (git! dir "fetch" "--quiet")
+      (git! dir "merge" "--no-edit" "origin/main")
+      (commit-file! dir "local.txt" "local\n" "local")
+      ;; the fetch brought v1 along; move it to the local commit so the same
+      ;; name now points elsewhere than the remote's
+      (git! dir "tag" "-f" "v1")
+      (let [{:keys [branch tags]} (git/git-push! dir)]
+        (is (zero? (:exit branch)) (:err branch))
+        (is (not (zero? (:exit tags))) "v1 already exists on the remote at another commit")
+        (is (re-find #"v1" (:err tags))))))
+  (testing "a moved upstream refuses the branch push as non-fast-forward"
+    (let [{:keys [dir] :as s} (scratch)]
+      (push-from-peer! s "peer.txt" "peer\n")
+      (commit-file! dir "local.txt" "local\n" "local")
+      (let [{:keys [branch]} (git/git-push! dir)]
+        (is (not (zero? (:exit branch))))
+        (is (re-find #"(?i)non-fast-forward|fetch first|rejected" (:err branch)))))))
+
+(deftest commit-paths!-commits-exactly-the-named-files-test
+  (let [{:keys [base dir]} (scratch)
+        project (str (fs/file-name dir))]
+    (commit-file! dir "deps.migrate.edn" "{:wip 0}\n" "someone's migration file")
+    ;; The sync touched deps.edn; a neighbour's work in progress sits in another .edn.
+    (spit (str (fs/path dir "deps.edn")) "{:deps {a/b {:mvn/version \"2\"}}}\n")
+    (spit (str (fs/path dir "deps.migrate.edn")) "{:wip 1}\n")
+    (let [done (git/commit-paths! base {project [(str (fs/path dir "deps.edn"))]} "chore(deps): sync t internal coords")]
+      (is (= {project ["deps.edn"]} done))
+      (is (= #{"deps.edn"} (head-files dir)) "only the named file is in the commit")
+      (is (= "chore(deps): sync t internal coords"
+             (str/trim (:out (git! dir "log" "-1" "--format=%s")))))
+      (is (= " M deps.migrate.edn"
+             (str/trimr (:out (git! dir "status" "--porcelain"))))
+          "the neighbour's edit is still uncommitted, untouched"))
+    (testing "a project with nothing to commit gets no entry"
+      (is (= {} (git/commit-paths! base {project [(str (fs/path dir "deps.edn"))]} "again"))))))
+
 (deftest git-upstream-test
   (let [{:keys [dir]} (scratch)]
     (is (= "origin/main" (git/git-upstream dir)))

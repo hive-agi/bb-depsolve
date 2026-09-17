@@ -21,3 +21,12 @@
     (is (some #(re-find #"\bdeps\.edn\b" %) lines))
     (is (some #(re-find #"\bbb\.edn\b" %) lines))
     (is (apply distinct? lines))))
+
+(deftest a-row-the-plan-holds-several-times-prints-once-with-its-count
+  (let [row {:coord :mvn :project "hive-universe" :lib 'io.github.hive-agi/hive-events
+             :old-version "0.5.14" :new-version "0.5.16" :source "clojars" :path "/w/hive-universe/deps.edn"}
+        out (strip-ansi (with-out-str (print-changes! [row row row])))
+        lines (filter #(str/includes? % "hive-events") (str/split-lines out))]
+    (is (= 1 (count lines)))
+    (is (str/includes? (first lines) "×3"))
+    (is (str/includes? out "3 mismatches found") "the count still says what --apply will write")))

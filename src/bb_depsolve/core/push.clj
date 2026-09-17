@@ -1,7 +1,8 @@
 (ns bb-depsolve.core.push
   "Pure decisions for a workspace-wide push: what to do with each project,
    and how to settle the conflicts a dependency sweep produces."
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [clojure.string :as str]))
 
 (def default-conflict-policy
   "Path -> how to settle it when a sweep's merge conflicts.
@@ -55,3 +56,31 @@
   "Counts per action over a seq of plans. Pure."
   [plans]
   (reduce (fn [acc {:keys [action]}] (update acc action (fnil inc 0))) {} plans))
+
+(defn push-outcome
+  "Classify one project's push from its two git results, the branch push and
+   the tag push. Pure.
+
+   The branch push is the verdict: :pushed when its ref update landed,
+   :rejected when the remote refused a non-fast-forward (the upstream moved;
+   --sync merges it), :failed otherwise. The tag push is reported BESIDE it
+   (:tags :pushed | :failed | :skipped), never folded into it: a tag the
+   remote already holds elsewhere must not make a landed push read as failed.
+   :detail and :tags-detail carry the line of git's stderr that says why: the
+   `!` ref line or the first `error:`/`fatal:`, else the first non-blank one."
+  [{:keys [branch tags]}]
+  (let [lines      (fn [s] (some->> s str/split-lines (map str/trim) (remove str/blank?)))
+        why-line   (fn [s] (let [ls (lines s)]
+                             (or (first (filter #(re-find #"^(!|error:|fatal:)" %) ls))
+                                 (first ls))))
+        ok?        (fn [r] (and (some? r) (zero? (:exit r 1))))
+        detail     (fn [r] (or (why-line (:err r)) (why-line (:out r)) "no output"))
+        rejected?  (fn [r] (boolean (some->> (:err r) (re-find #"(?i)non-fast-forward|fetch first|\[rejected\]"))))]
+    (cond-> {:status (cond (ok? branch)       :pushed
+                           (rejected? branch) :rejected
+                           :else              :failed)
+             :tags   (cond (nil? tags) :skipped
+                           (ok? tags)  :pushed
+                           :else       :failed)}
+      (not (ok? branch))            (assoc :detail (detail branch))
+      (and tags (not (ok? tags)))   (assoc :tags-detail (detail tags)))))

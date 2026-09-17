@@ -91,3 +91,31 @@
 (deftest summary-counts-by-action-test
   (is (= {:push 2 :skip 1}
          (push/plan-summary [{:action :push} {:action :skip :reason :no-remote} {:action :push}]))))
+
+(deftest a-landed-push-whose-tags-were-refused-is-still-pushed-test
+  (let [out (push/push-outcome {:branch {:exit 0 :out "" :err ""}
+                                :tags   {:exit 1 :out ""
+                                         :err "To origin\n ! [rejected]        v0.4.28 -> v0.4.28 (already exists)\nerror: failed to push some refs"}})]
+    (is (= :pushed (:status out)) "the ref update landed; the verdict is the branch push")
+    (is (= :failed (:tags out)))
+    (is (= "! [rejected]        v0.4.28 -> v0.4.28 (already exists)" (:tags-detail out))
+        "git's first informative stderr line, so the row is actionable")
+    (is (nil? (:detail out)))))
+
+(deftest a-non-fast-forward-is-rejected-not-failed-test
+  (let [out (push/push-outcome {:branch {:exit 1 :out ""
+                                         :err "To origin\n ! [rejected]        HEAD -> main (non-fast-forward)\nhint: use 'git pull' before pushing again."}
+                                :tags   {:exit 0 :out "" :err ""}})]
+    (is (= :rejected (:status out)) "the upstream moved; --sync merges it")
+    (is (= :pushed (:tags out)))
+    (is (re-find #"non-fast-forward" (:detail out)))))
+
+(deftest any-other-branch-failure-is-failed-with-its-reason-test
+  (is (= {:status :failed :tags :skipped :detail "fatal: unable to access 'x': Could not resolve host"}
+         (push/push-outcome {:branch {:exit 128 :out "" :err "fatal: unable to access 'x': Could not resolve host\n"}
+                             :tags nil})))
+  (is (= {:status :failed :tags :skipped :detail "no output"}
+         (push/push-outcome {:branch {:exit 1 :out "" :err ""} :tags nil}))
+      "a silent failure still says so")
+  (is (= {:status :pushed :tags :pushed}
+         (push/push-outcome {:branch {:exit 0} :tags {:exit 0}}))))

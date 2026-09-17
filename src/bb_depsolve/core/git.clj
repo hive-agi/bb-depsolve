@@ -93,6 +93,15 @@
          sort
          vec)))
 
+(defn git-push!
+  "Push the current branch, then the tags, and answer BOTH results:
+   {:branch result :tags result}. Two results because they answer two
+   questions; folding them into one boolean reported forty-five landed pushes
+   as failed when only their tags were refused (2026-09-17)."
+  [project-dir]
+  {:branch (git project-dir "push")
+   :tags   (git project-dir "push" "--tags")})
+
 (defn- auto-commit-project!
   "Commit changed dep files in a project with descriptive message.
    Returns true if a commit was made."
@@ -115,3 +124,22 @@
             :let [project-dir (str (fs/path root-dir project))]]
       (when (auto-commit-project! project-dir message)
         (println (ui/c :green (str "  Committed: " project)))))))
+
+(defn commit-paths!
+  "Commit exactly the files in PATHS-BY-PROJECT ({project [abs-path ...]}),
+   one commit per project with MESSAGE, staging nothing else: a neighbour's
+   work in progress in some other .edn of the same project stays where it
+   is. Returns {project [relative-path ...]} for the projects that got a
+   commit."
+  [root-dir paths-by-project message]
+  (into {}
+        (keep (fn [[project paths]]
+                (let [dir (str (fs/path root-dir project))
+                      rel (mapv #(str (fs/relativize dir %)) paths)]
+                  (when (seq rel)
+                    (apply git dir "add" "--" rel)
+                    (let [c (apply git dir "commit" "-q" "-m" message "--" rel)]
+                      (when (zero? (:exit c))
+                        (println (ui/c :green (str "  Committed: " project " (" (str/join ", " rel) ")")))
+                        [project rel]))))))
+        paths-by-project))

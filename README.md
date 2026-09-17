@@ -48,7 +48,14 @@ Handles both coordinate styles:
 ```bash
 bb -m bb-depsolve.cli.main sync --root . --org hive-agi
 bb -m bb-depsolve.cli.main sync --root . --org hive-agi --apply  # write changes
+bb -m bb-depsolve.cli.main sync --root . --org hive-agi --apply --commit  # and commit exactly the files it changed, one commit per project
 ```
+
+`--commit` stages only the dep files the sync rewrote and commits them as
+`chore(deps): sync <org> internal coords`; a neighbour's uncommitted edit to
+some other `.edn` in the same project is left where it is. A row the plan holds
+several times (the same lib pinned at several places in one file) prints once
+with its count.
 
 A Maven version is resolved **per registry** (Clojars, Maven Central, and the private
 registry the workspace declares), and every pin is chosen from the registries the
