@@ -11,7 +11,8 @@
             [hive-dsl.result :as r]
             [hive-weave.parallel :as par]
             [bb-depsolve.core.upgrade.guard :as guard]
-            [bb-depsolve.version.repos :as repos]))
+            [bb-depsolve.version.repos :as repos]
+            [bb-depsolve.core.pins :as pins]))
 
 (def ^:private resolve-concurrency
   "Simultaneous registry lookups. Each is one or more HTTP round-trips, so the
@@ -54,7 +55,7 @@
   [held]
   (when (seq held)
     (println (ui/c :yellow (format "%d upgrade(s) HELD, not applied:" (count held))))
-    (doseq [{:keys [lib old-version new-version reason registry project]}
+    (doseq [{:keys [lib old-version new-version reason registry project pin]}
             (sort-by (juxt (comp str :lib) :project) held)]
       (printf "  %-40s %s -> %s  %s  (%s)\n"
               (str lib)
@@ -65,6 +66,8 @@
                               :downgrade   "refused: moves the pin DOWN"
                               :unreachable (str "only on registry " registry
                                                 ", which this project does not declare")
+                              :pinned      (str "pinned in " pins/default-file-name
+                                                (when-let [r (:reason pin)] (str ": " r)))
                               (str reason)))
               project))
     (println)))
@@ -103,7 +106,10 @@
                       io.github.<org>/* libs are left to `sync`
      --apply          write the changes; without a TTY it refuses unless --all
                       or --only names the selection
-     --commit         auto-commit the changed dep files"
+     --commit         auto-commit the changed dep files
+
+   A lib named in the workspace's pins file is reported HELD with the reason
+   recorded there, rather than offered again on every run. See `pins`."
   ([ctx] (upgrade-cmd (live/live-resolver) ctx))
   ([resolver {:keys [opts]}]
    (let [{:keys [root apply commit skip-dirs depth pre-release project org]
@@ -165,7 +171,8 @@
              (println (ui/c :dim (str "    " lib)))))
          (println)
 
-         (let [{:keys [upgrades held]} (guard/plan file-deps latest opts)]
+         (let [{:keys [upgrades held]} (guard/plan file-deps latest
+                                                   (assoc opts :pins (pins/read-pins root-dir)))]
 
            (print-held! held)
 

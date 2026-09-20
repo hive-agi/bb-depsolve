@@ -4,12 +4,14 @@
    pinned-dep   {:path :project :lib :version :consumer-repos}
    upgrade-row  {:path :project :lib :old-version :new-version}
    held-row     upgrade-row plus
-                  :reason    :major | :downgrade | :unreachable
-                  :registry  repo id (only for :unreachable)"
+                  :reason    :major | :downgrade | :unreachable | :pinned
+                  :registry  repo id (only for :unreachable)
+                  :pin       the pin entry (only for :pinned)"
   (:require [bb-depsolve.version.api :as v]
             [bb-depsolve.version.repos :as repos]
             [bb-depsolve.version.semver :as semver]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-depsolve.core.pins :as pins]))
 
 (def default-org
   "The internal org whose io.github.<org>/* libs `sync` owns."
@@ -121,16 +123,27 @@
       (and beyond (semver/version-newer? version (:version beyond)))
       (assoc row :new-version (:version beyond) :reason :unreachable :registry (:id beyond)))))
 
+(defn hold-pinned
+  "ROW held at :pinned when PINS covers its lib in its project, carrying the
+   pin under :pin. A pin overrides whatever reason the version policy reached:
+   the operator's recorded decision is more specific than `held-jump?`, and it
+   is the one a reader needs to see to know why the row will not move."
+  [row pins]
+  (if-let [p (and pins (pins/pin-for pins (:lib row) (:project row)))]
+    (assoc row :reason :pinned :pin p)
+    row))
+
 (defn plan
   "Split DEPS ([pinned-dep]) against LATEST ({lib [registry-version]}) into
    {:upgrades [upgrade-row] :held [held-row]}, both distinct and in DEPS
    order. A dep whose lib has no rows, or with nothing to move, is in neither.
-   OPTS: :allow-major."
-  [deps latest opts]
+   OPTS: :allow-major, :pins."
+  [deps latest {:keys [pins] :as opts}]
   (let [rows (->> deps
                   (keep (fn [{:keys [lib consumer-repos] :as dep}]
                           (when-let [lib-rows (seq (get latest lib))]
-                            (decide dep (consumer-candidate lib-rows consumer-repos) opts))))
+                            (some-> (decide dep (consumer-candidate lib-rows consumer-repos) opts)
+                                    (hold-pinned pins)))))
                   (distinct))]
     {:upgrades (vec (remove :reason rows))
      :held     (vec (filter :reason rows))}))

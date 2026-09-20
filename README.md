@@ -141,6 +141,51 @@ the selection: an agent shell has no interactive picker, and "no selection" must
 not mean "everything".
 
 
+### `pins` — Deps the workspace holds back, and why
+
+`--exclude` lasts exactly as long as the command line it was typed on. The next
+`upgrade --all` offers the lib again, and nothing records why it was skipped the
+first time. A pin is that decision written down, in `depsolve-pins.edn` at the
+workspace root:
+
+```clojure
+{:pins
+ [{:lib     org.clojure/core.cache
+   :version "1.2.263"
+   :project "hive-cache"
+   :since   "2026-09-20"
+   :reason  "single-flight test fails 1 run in 5 above this"}]}
+```
+
+`:lib` is the only required key, and a bare `foo` names `foo/foo`. `:project`
+scopes a pin to one project and beats a workspace-wide pin for the same lib.
+`:version` records where the pin is held.
+
+`upgrade` then reports the lib as **held**, carrying the reason, rather than
+dropping it from the report the way `--exclude` does:
+
+```
+  org.clojure/core.cache   1.2.263 -> 1.2.999  pinned in depsolve-pins.edn: single-flight test fails 1 run in 5 above this  (hive-cache)
+```
+
+That difference is the point. An excluded lib is invisible, so nobody can see it
+is being skipped or ask whether the reason still holds; a held one is on the
+report every run, with its reason attached.
+
+`pins` lists them and audits each against what the dep files actually declare:
+
+```bash
+bb-depsolve pins --root .
+bb-depsolve pins --root . --project hive-cache
+bb-depsolve pins --root . --no-fail   # report staleness without exiting 1
+```
+
+A pin is `held` when the dep sits where the pin says, `drifted` when the file
+moved underneath it, and `unused` when no dep file declares the lib at all. The
+last two mean the pins file has gone stale and exit 1, since a pin nobody checks
+is how a temporary hold becomes permanent. A pin with no `:version` forbids
+movement without asserting a place, so it can never drift.
+
 ### `lint` — Detect dep anti-patterns
 
 Finds `:local/root` deps that should be converted to `:git/tag` or `:mvn/version` before publishing. Optionally auto-fixes by splitting into a `local.deps.edn` overlay.

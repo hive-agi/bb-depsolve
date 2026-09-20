@@ -17,7 +17,8 @@
             [bb-depsolve.wave.help :as help]
             [bb-depsolve.release.inspect :as inspect]
             [bb-depsolve.layer.cmd :as layer]
-            [bb-depsolve.core.auth :as auth]))
+            [bb-depsolve.core.auth :as auth]
+            [bb-depsolve.core.pins.cmd :as pins]))
 
 (defn- wrap-help
   "Wrap a command fn so --help prints subcommand usage instead of executing.
@@ -49,6 +50,8 @@
     :doc "Lint latest tagged releases for :local/root anti-patterns"}
    {:cmds ["layers"]  :fn (wrap-help layer/layers-cmd "layers" "Check every internal edge against depsolve-layers.edn")
     :doc "Check the dependency graph against the workspace layer order"}
+   {:cmds ["pins"]    :fn (wrap-help pins/pins-cmd "pins" "List the deps this workspace holds back, and why")
+    :doc "List the deps this workspace holds back, and why"}
    {:cmds ["bump"]    :fn (wrap-help bump/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help tree/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
