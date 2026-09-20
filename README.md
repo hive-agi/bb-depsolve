@@ -186,6 +186,28 @@ last two mean the pins file has gone stale and exit 1, since a pin nobody checks
 is how a temporary hold becomes permanent. A pin with no `:version` forbids
 movement without asserting a place, so it can never drift.
 
+### `depsolve-skip.edn` — Directories no scan touches
+
+A vendored upstream clone, a scratch copy or a read-only mirror living in the
+workspace is not the workspace's to change. Sweeping one writes commits nobody
+can publish, and every `push-all` afterwards fails on the same directory.
+`depsolve-skip.edn` at the workspace root excludes it from every command:
+
+```clojure
+{:skip
+ [{:dir    "clojure-lsp"
+   :reason "vendored upstream; origin is github.com/clojure-lsp/clojure-lsp, no push rights"}]}
+```
+
+A bare string works when no reason is offered. The list is **unioned** with
+`--skip-dirs`, so neither silently loses to the other, and it is honoured by
+everything that scans — `sync`, `upgrade`, `lint`, `audit`, `graph`, `report`,
+`bump`, `lock` and `push-all` — because they all discover through the same two
+functions.
+
+`--root` pointing *at* a listed directory still scans it: naming a root is an
+explicit instruction, which outranks a list whose job is to bound a sweep.
+
 ### `lint` — Detect dep anti-patterns
 
 Finds `:local/root` deps that should be converted to `:git/tag` or `:mvn/version` before publishing. Optionally auto-fixes by splitting into a `local.deps.edn` overlay.

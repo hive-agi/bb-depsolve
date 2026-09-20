@@ -2,7 +2,8 @@
   "Workspace scanning: dep-file discovery and project layout."
   (:require [babashka.fs :as fs]
             [bb-depsolve.version.api :as v]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-depsolve.core.skip :as skip]))
 
 (def default-skip-dirs
   #{"vendor" "node_modules" ".git" "target" ".cpcache" ".lsp"})
@@ -17,15 +18,20 @@
 
 (defn find-workspace-projects
   "Find all git-initialized subdirectories with VERSION files.
-   Public: used by bb-depsolve.wave."
+   Public: used by bb-depsolve.wave.
+
+   The workspace's own skip file is unioned onto SKIP-DIRS, so a directory
+   recorded there is left alone by every command without each one having to
+   be passed --skip-dirs."
   [root-dir skip-dirs]
-  (->> (fs/list-dir root-dir)
-       (filter fs/directory?)
-       (remove #(skip-path? root-dir skip-dirs %))
-       (filter #(fs/exists? (fs/path % "VERSION")))
-       (filter #(fs/exists? (fs/path % ".git")))
-       (sort)
-       (vec)))
+  (let [skip-dirs (into (set skip-dirs) (skip/dirs root-dir))]
+    (->> (fs/list-dir root-dir)
+         (filter fs/directory?)
+         (remove #(skip-path? root-dir skip-dirs %))
+         (filter #(fs/exists? (fs/path % "VERSION")))
+         (filter #(fs/exists? (fs/path % ".git")))
+         (sort)
+         (vec))))
 
 (def ignored-dep-files
   "Dep-file names that look like deps.edn but are not a committed dep file.
@@ -48,10 +54,15 @@
 (defn find-dep-files
   "Find all deps.edn, deps.<name>.edn, bb.edn, and shadow-cljs.edn files in the
    workspace. The root's own dep files are always included, so --root can point
-   directly AT a project, not only at the workspace container above it."
+   directly AT a project, not only at the workspace container above it.
+
+   The workspace's own skip file is unioned onto :skip-dirs. The root itself is
+   never skipped: --root pointing AT a directory is an explicit instruction to
+   scan it, which outranks a list that exists to bound a sweep."
   [{:keys [root skip-dirs depth]
     :or {root "." skip-dirs default-skip-dirs depth default-depth}}]
   (let [root-dir (str (fs/canonicalize root))
+        skip-dirs (into (set skip-dirs) (skip/dirs root-dir))
         scan-dirs (if (pos? depth)
                     (into [root-dir]
                           (->> (fs/list-dir root-dir)
