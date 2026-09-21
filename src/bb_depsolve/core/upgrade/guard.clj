@@ -133,6 +133,26 @@
     (assoc row :reason :pinned :pin p)
     row))
 
+(defn hold-disharmonious
+  "Move the rows FINDINGS-BY-ROW covers out of :upgrades and into :held with
+   reason :disharmony, carrying the finding under :harmony.
+
+   Separate from `decide` on purpose: every other verdict is a judgement about
+   VERSION NUMBERS and needs nothing but the row, while this one is a judgement
+   about JAR BYTES that only a classpath read can reach. Keeping it a
+   re-partition of an existing plan leaves `plan` pure and testable, and makes
+   the expensive read run for the handful of rows that survived every cheaper
+   check rather than for every candidate.
+
+   FINDINGS-BY-ROW is keyed by the row itself, so a lib held in one project and
+   clean in another is held in exactly the project whose classpath said so."
+  [{:keys [upgrades held]} findings-by-row]
+  (let [split (group-by #(contains? findings-by-row %) upgrades)]
+    {:upgrades (vec (get split false))
+     :held (into (vec held)
+                 (map #(assoc % :reason :disharmony :harmony (get findings-by-row %)))
+                 (get split true))}))
+
 (defn plan
   "Split DEPS ([pinned-dep]) against LATEST ({lib [registry-version]}) into
    {:upgrades [upgrade-row] :held [held-row]}, both distinct and in DEPS
