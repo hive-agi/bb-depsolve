@@ -11,7 +11,7 @@
         io.github.hive-agi/hive-schemas {:mvn/version "0.1.39"}
         io.github.hive-agi/hive-weave {:mvn/version "0.4.1"}
         org.clojure/data.xml {:mvn/version "0.2.0-alpha9"}
-        rewrite-clj/rewrite-clj {:mvn/version "1.2.57"}}
+        rewrite-clj/rewrite-clj {:mvn/version "1.3.58"}}
  :aliases
  {  ;; :build — tools.build entrypoint (clojure -T:build <task>). Canonical hive
   ;; build: jar / jar-aot / install / bump / verify-license / deploy.
