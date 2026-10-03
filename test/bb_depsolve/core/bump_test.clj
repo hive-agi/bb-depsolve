@@ -109,3 +109,68 @@
       (with-redefs [proc/sh (recording-sh (atom []))]
         (bump/bump-cmd {:opts {:root dir :apply true}})))
     (is (= "0.4.3" (str/trim (slurp nested))))))
+
+;; =============================================================================
+;; Protected branch — the tag must not outrun a rejected branch push
+;; =============================================================================
+
+(defn- stub-git
+  "A git port that records argv and fails the verbs in FAILING (a set of
+   argv vectors) with a GH006-shaped stderr."
+  [calls failing]
+  (fn [& args]
+    (swap! calls conj (vec args))
+    (if (contains? failing (vec args))
+      {:exit 1 :out "" :err "remote: error: GH006: Protected branch update failed for refs/heads/main."}
+      {:exit 0 :out "" :err ""})))
+
+(deftest publish-release-skips-the-tag-push-when-the-branch-push-is-rejected-test
+  (let [calls (atom [])
+        res   (bump/publish-release! (stub-git calls #{["push"]}) "v0.4.3")]
+    (is (= :bump/branch-push-rejected (get-in res [:error :type])))
+    (is (str/includes? (get-in res [:error :stderr]) "GH006"))
+    (is (not-any? #(= ["push" "--tags"] %) @calls)
+        "the tag never reaches the remote, so it cannot land orphaned ahead of main")))
+
+(deftest publish-release-pushes-the-tag-after-the-branch-lands-test
+  (let [calls (atom [])
+        res   (bump/publish-release! (stub-git calls #{}) "v0.4.3")]
+    (is (= {:tag "v0.4.3" :pushed #{:branch :tag}} (:ok res)))
+    (is (= [["commit" "-m" "release: v0.4.3"] ["tag" "v0.4.3"] ["push"] ["push" "--tags"]]
+           @calls))))
+
+(deftest publish-release-stops-on-a-failed-commit-test
+  (let [calls (atom [])
+        res   (bump/publish-release! (stub-git calls #{["commit" "-m" "release: v0.4.3"]}) "v0.4.3")]
+    (is (= :bump/git-failed (get-in res [:error :type])))
+    (is (= 1 (count @calls)) "nothing is tagged or pushed after a failed commit")))
+
+(defn- sh! [dir & args]
+  (let [r (proc/sh (into ["git" "-C" (str dir)] args))]
+    (when-not (zero? (:exit r)) (throw (ex-info "fixture git failed" {:args args :r r})))
+    r))
+
+(deftest bump-against-a-protected-remote-leaves-no-orphan-tag-test
+  (testing "a temp remote that refuses the branch update but accepts tags — the
+            GH006 asymmetry. A non-bare remote with main checked out has exactly
+            that shape (receive.denyCurrentBranch=refuse), no hook needed."
+    (let [root   (str (fs/create-temp-dir {:prefix "bb-depsolve-protected"}))
+          remote (str (fs/path root "remote"))
+          dir    (str (fs/path root "work"))]
+      (sh! root "init" "-q" "-b" "main" remote)
+      (sh! remote "config" "user.email" "t@t") (sh! remote "config" "user.name" "t")
+      (spit (str (fs/path remote "VERSION")) "0.4.2\n")
+      (sh! remote "add" "VERSION") (sh! remote "commit" "-q" "-m" "init")
+      (sh! root "clone" "-q" remote dir)
+      (sh! dir "config" "user.email" "t@t") (sh! dir "config" "user.name" "t")
+      (let [exit (atom nil)
+            out  (with-out-str
+                   (bump/bump-cmd {:opts {:root dir :apply true}
+                                   :exit! #(reset! exit %)}))]
+        (is (= "" (str/trim (:out (proc/sh ["git" "-C" remote "tag" "--list"]))))
+            "the remote holds no tag: v0.4.3 was never pushed")
+        (is (= "v0.4.3" (str/trim (:out (proc/sh ["git" "-C" dir "tag" "--list"]))))
+            "the tag is kept locally for the PR-merge recovery")
+        (is (= 1 @exit) "bump reports failure")
+        (is (str/includes? out "rejected"))
+        (is (str/includes? out "v0.4.3"))))))

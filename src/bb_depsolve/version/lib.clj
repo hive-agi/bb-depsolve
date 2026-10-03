@@ -61,19 +61,45 @@
   [lib-sym]
   (last (str/split (str lib-sym) #"/")))
 
+(defn- declared-match
+  "The one coordinate in DECLARED that `lib-sym` / `local-path` name, or nil.
+
+   A lib the project declares verbatim is its own answer. Otherwise a declared
+   coordinate whose artifact equals the lib's artifact, or the basename of the
+   :local/root path, is the coordinate meant: the project has already stated
+   the group. Two declared coordinates sharing that artifact are ambiguous and
+   answer nil rather than guessing between them."
+  [lib-sym local-path declared]
+  (when (seq declared)
+    (if (contains? declared lib-sym)
+      lib-sym
+      (let [names (cond-> #{(lib-artifact-id lib-sym)}
+                    (string? local-path) (conj (last (str/split local-path #"/"))))
+            hits  (filter #(contains? names (lib-artifact-id %)) declared)]
+        (when (= 1 (count hits))
+          (first hits))))))
+
 (defn canonical-lib
   "The coordinate a :local/root entry must be keyed on.
 
-   A forge-qualified lib is already canonical. Otherwise, when `org` is known
-   and `local-path` names a sibling checkout, the canonical coordinate is
-   io.github.<org>/<sibling-dir>. Falls back to `lib-sym` unchanged.
-   Pure: no I/O."
-  [lib-sym local-path org]
-  (or (when (parse-github-lib lib-sym) lib-sym)
-      (when org
-        (when-let [dir (infer-sibling-dir local-path)]
-          (symbol (str "io.github." org "/" dir))))
-      lib-sym))
+   The project's own declarations decide first: DECLARED is the set of libs its
+   deps.edn names (root :deps and every alias dep map, see
+   `parse/declared-libs`). A :local/root keyed on any other group is not an
+   override, it is an additional unrelated library on the classpath.
+
+   Only when the project declares nothing under that name does the old guess
+   apply: a forge-qualified lib is already canonical; otherwise, when `org` is
+   known and `local-path` names a sibling checkout, io.github.<org>/<dir>.
+   Falls back to `lib-sym` unchanged. Pure: no I/O."
+  ([lib-sym local-path org]
+   (canonical-lib lib-sym local-path org nil))
+  ([lib-sym local-path org declared]
+   (or (declared-match lib-sym local-path declared)
+       (when (parse-github-lib lib-sym) lib-sym)
+       (when org
+         (when-let [dir (infer-sibling-dir local-path)]
+           (symbol (str "io.github." org "/" dir))))
+       lib-sym)))
 
 (defn group-id->path
   "Convert Maven groupId to URL path segment.

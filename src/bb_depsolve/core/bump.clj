@@ -6,7 +6,8 @@
             [bb-depsolve.core.sync :as sync]
             [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.version.api :as v]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [hive-dsl.result :as r]))
 
 (defn find-consumers
   "Scan workspace for projects whose dep files reference TARGET-LIB.
@@ -76,28 +77,79 @@
        :new-version (v/semver->version next-semver)
        :new-tag     (v/semver->tag next-semver)})))
 
+(defn- git-step
+  "Run one git ARGV through the GIT port; a non-zero exit is an error of TYPE
+   carrying the argv and stderr."
+  [git argv type]
+  (let [{:keys [exit err]} (apply git argv)]
+    (if (zero? exit)
+      (r/ok argv)
+      (r/err {:type type :argv argv :stderr (str/trim (or err ""))}))))
+
+(defn publish-release!
+  "Commit the staged release, tag it TAG, push the branch and only then the tag.
+
+   GIT is the port: (fn [& argv] -> {:exit :out :err}). The tag push is
+   conditional on the branch push: on a protected branch (GH006, PR-required)
+   the branch push is rejected while `git push --tags` still succeeds, which
+   would publish a tag one commit ahead of the remote branch, orphaned, and the
+   next bump would collide on a stale VERSION. So a rejected branch push stops
+   here with :bump/branch-push-rejected and the tag stays local.
+
+   => (r/ok {:tag :pushed #{:branch :tag}}) or (r/err {:type ...})."
+  [git tag]
+  (r/let-ok [_ (git-step git ["commit" "-m" (str "release: " tag)] :bump/git-failed)
+             _ (git-step git ["tag" tag] :bump/git-failed)
+             _ (git-step git ["push"] :bump/branch-push-rejected)
+             _ (git-step git ["push" "--tags"] :bump/tag-push-failed)]
+    (r/ok {:tag tag :pushed #{:branch :tag}})))
+
+(defn- report-publish!
+  "Print the outcome of `publish-release!`. Returns true when it landed."
+  [tag res]
+  (if (r/ok? res)
+    (do (println (ui/c :green (str "  Committed, tagged and pushed " tag)))
+        true)
+    (let [{:keys [type stderr]} (:error res)]
+      (case type
+        :bump/branch-push-rejected
+        (do (println (ui/c :red (str "  Branch push rejected; tag " tag " NOT pushed.")))
+            (when-not (str/blank? stderr) (println (ui/c :dim (str "  " stderr))))
+            (println (ui/c :yellow (str "  The release commit and tag " tag " exist only locally. "
+                                        "If the branch is protected, push a release branch, open a PR, "
+                                        "merge it with a merge commit, then `git push origin " tag "`."))))
+        :bump/tag-push-failed
+        (println (ui/c :red (str "  Branch pushed but tag push failed: " stderr)))
+        (println (ui/c :red (str "  git failed: " stderr))))
+      false)))
+
 (defn bump-cmd
   "Bump the VERSION file, git commit + tag + push, optionally sync downstream.
    Writes nothing without --apply: the default is a dry run that prints the
    planned bump. A major increment beyond v0 first lists the workspace
    consumers that would need a coordinated update, and --force is required to
-   proceed past that warning."
-  [{:keys [opts]}]
+   proceed past that warning.
+
+   The tag is pushed only after the branch push lands (`publish-release!`): a
+   protected branch that rejects the release commit must not receive an
+   orphaned tag. A rejected push exits 1 and skips --sync. `:exit!` (default
+   System/exit) is the process-exit port."
+  [{:keys [opts exit!] :or {exit! #(System/exit %)}}]
   (let [{:keys [root sync org force apply]
          :or {root "."}} opts
         project-dir (str (fs/canonicalize root))
         version-file (str (fs/path project-dir "VERSION"))]
 
-    (when-not (fs/exists? version-file)
-      (println (ui/c :red (str "Error: VERSION file not found at " version-file)))
-      (System/exit 1))
+    (if-not (fs/exists? version-file)
+      (do (println (ui/c :red (str "Error: VERSION file not found at " version-file)))
+          (exit! 1))
 
     (let [current-str (str/trim (slurp version-file))
           plan        (plan-bump current-str opts)]
 
-      (when-not plan
-        (println (ui/c :red (str "Error: Cannot parse version '" current-str "'")))
-        (System/exit 1))
+      (if-not plan
+        (do (println (ui/c :red (str "Error: Cannot parse version '" current-str "'")))
+            (exit! 1))
 
       (let [{:keys [level new-version new-tag]} plan
             project-name (str (fs/file-name project-dir))
@@ -125,53 +177,41 @@
                                          (count consumers) project-name)))
           (doseq [{:keys [project version]} consumers]
             (println (str "    " (ui/c :cyan project) " @ " (ui/c :dim version))))
-          (println (ui/c :dim "  Run `bb-depsolve sync --apply` after bump to align."))
-          (when-not force
-            (println (ui/c :dim "  Pass --force to bypass this warning."))
-            (System/exit 1)))
+          (println (ui/c :dim "  Run `bb-depsolve sync --apply` after bump to align.")))
 
-        (println (ui/c :bold (format "Bumping %s -> %s (%s)" current-str new-version (name level))))
-        (println)
-
-        (if-not apply
-          (println (ui/c :dim "  Dry run. Pass --apply to write VERSION, tag and push."))
+        (if (and (seq consumers) (not force))
+          (do (println (ui/c :dim "  Pass --force to bypass this warning."))
+              (exit! 1))
           (do
-            (spit version-file (str new-version "\n"))
-            (println (ui/c :green (str "  Updated VERSION: " new-version)))
-
-            (let [extra-version-files (->> (fs/glob project-dir "**/VERSION")
-                                           (map str)
-                                           (remove #{version-file}))]
-              (doseq [f extra-version-files]
-                (spit f (str new-version "\n"))
-                (println (ui/c :green (str "  Updated " (fs/relativize project-dir f))))))
-
-            (let [run-git (fn [& args]
-                            (let [result (proc/sh (into ["git" "-C" project-dir] args))]
-                              (when-not (zero? (:exit result))
-                                (println (ui/c :yellow (str "  git " (first args) ": "
-                                                            (str/trim (:err result ""))))))
-                              result))
-                  all-version-files (into ["VERSION"]
-                                          (->> (fs/glob project-dir "**/VERSION")
-                                               (map #(str (fs/relativize project-dir %)))))]
-              (doseq [f all-version-files]
-                (run-git "add" f))
-              (run-git "commit" "-m" (str "release: " new-tag))
-              (println (ui/c :green (str "  Committed: release: " new-tag)))
-
-              (run-git "tag" new-tag)
-              (println (ui/c :green (str "  Tagged: " new-tag)))
-
-              (run-git "push")
-              (run-git "push" "--tags")
-              (println (ui/c :green "  Pushed to remote")))
-
+            (println (ui/c :bold (format "Bumping %s -> %s (%s)" current-str new-version (name level))))
             (println)
 
-            (when (and sync org)
-              (println (ui/c :bold "Running sync..."))
-              (sync/sync-cmd {:opts {:root (str (fs/parent project-dir))
-                                     :org org :apply true}}))
+            (if-not apply
+              (println (ui/c :dim "  Dry run. Pass --apply to write VERSION, tag and push."))
+              (do
+                (spit version-file (str new-version "\n"))
+                (println (ui/c :green (str "  Updated VERSION: " new-version)))
 
-            (println (ui/c :green (str "Done: " new-tag)))))))))
+                (let [extra-version-files (->> (fs/glob project-dir "**/VERSION")
+                                               (map str)
+                                               (remove #{version-file}))]
+                  (doseq [f extra-version-files]
+                    (spit f (str new-version "\n"))
+                    (println (ui/c :green (str "  Updated " (fs/relativize project-dir f))))))
+
+                (let [run-git (fn [& args]
+                                (proc/sh (into ["git" "-C" project-dir] args)))
+                      all-version-files (into ["VERSION"]
+                                              (->> (fs/glob project-dir "**/VERSION")
+                                                   (map #(str (fs/relativize project-dir %)))))]
+                  (doseq [f all-version-files]
+                    (run-git "add" f))
+                  (if-not (report-publish! new-tag (publish-release! run-git new-tag))
+                    (exit! 1)
+                    (do
+                      (println)
+                      (when (and sync org)
+                        (println (ui/c :bold "Running sync..."))
+                        (sync/sync-cmd {:opts {:root (str (fs/parent project-dir))
+                                               :org org :apply true}}))
+                      (println (ui/c :green (str "Done: " new-tag))))))))))))))))
