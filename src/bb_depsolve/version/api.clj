@@ -28,6 +28,8 @@
 (def find-shadow-deps parse/find-shadow-deps)
 (def update-shadow-dep rewrite/update-shadow-dep)
 (def find-local-deps parse/find-local-deps)
+
+(def declared-libs parse/declared-libs)
 (def replace-local-with-git rewrite/replace-local-with-git)
 (def replace-local-with-mvn rewrite/replace-local-with-mvn)
 (def update-git-dep rewrite/update-git-dep)

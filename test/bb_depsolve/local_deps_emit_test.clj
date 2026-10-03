@@ -43,3 +43,29 @@
     (let [out (emit [{:lib 'io.github.hive-agi/hive-dsl :path "../hive-dsl"}] "hive-agi")]
       (is (clojure.string/starts-with? out "{"))
       (is (clojure.string/includes? out ";; local.deps.edn")))))
+
+(deftest alias-declared-libs-emit-into-an-override-alias
+  (testing "a lib declared under an alias is overridden via :local-overrides :override-deps,
+            because a root :deps entry loses to the alias's :extra-deps"
+    (let [out (emit [{:lib 'io.github.hive-agi/hive-dsl :path "../hive-dsl" :scope {:kind :deps}}
+                     {:lib 'io.github.hive-agi/hive-mcp :path "../hive-mcp"
+                      :scope {:kind :alias :alias :test :key :extra-deps}}]
+                    "hive-agi")
+          parsed (edn/read-string out)]
+      (is (= {'io.github.hive-agi/hive-dsl {:local/root "../hive-dsl"}} (:deps parsed)))
+      (is (= {'io.github.hive-agi/hive-mcp {:local/root "../hive-mcp"}}
+             (get-in parsed [:aliases :local-overrides :override-deps])))
+      (is (clojure.string/starts-with? out "{")))))
+
+(deftest regeneration-preserves-an-existing-override-alias
+  (testing "a hand-written :local-overrides block and other aliases survive regeneration"
+    (let [existing "{:deps {a/a {:local/root \"../a\"}}\n :aliases {:local-overrides {:override-deps {io.github.hive-agi/hive-test {:local/root \"../hive-test\"}}}\n           :mine {:extra-paths [\"dev\"]}}}\n;; trailing\n"
+          out (emit [{:lib 'io.github.hive-agi/hive-mcp :path "../hive-mcp"
+                      :scope {:kind :alias :alias :test :key :extra-deps}}]
+                    "hive-agi" nil existing)
+          parsed (edn/read-string out)]
+      (is (= {'io.github.hive-agi/hive-test {:local/root "../hive-test"}
+              'io.github.hive-agi/hive-mcp  {:local/root "../hive-mcp"}}
+             (get-in parsed [:aliases :local-overrides :override-deps])))
+      (is (= {:extra-paths ["dev"]} (get-in parsed [:aliases :mine])))
+      (is (= {'a/a {:local/root "../a"}} (:deps parsed)) "existing root overrides are kept"))))
