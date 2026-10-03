@@ -120,6 +120,30 @@
          (mapv (fn [[match lib path]]
                  {:lib (symbol lib) :path path :match match})))))
 
+(defn declared-libs
+  "Set of lib symbols the dep-file CONTENT declares with a real coordinate:
+   root :deps plus every alias's :deps / :extra-deps / :override-deps /
+   :replace-deps. A :local/root occurrence does not count — it is the override
+   being keyed, not a declaration of the coordinate. Total: unreadable content
+   declares nothing. Pure."
+  [content]
+  (let [m (when (string? content)
+            (try (edn/read-string {:default (fn [_ v] v)} content)
+                 (catch Exception _ nil)))
+        coord-maps (when (map? m)
+                     (cons (:deps m)
+                           (for [[_ a] (:aliases m)
+                                 :when (map? a)
+                                 k [:deps :extra-deps :override-deps :replace-deps]]
+                             (get a k))))]
+    (into #{}
+          (for [cm coord-maps
+                :when (map? cm)
+                [lib coord] cm
+                :when (and (symbol? lib)
+                           (not (and (map? coord) (contains? coord :local/root))))]
+            lib))))
+
 (defn deps-edn->dep-coords
   "Parse deps.edn string, extract dependency coordinates from :deps.
    Returns vec of {:lib :version :type} where type is :mvn or :git.

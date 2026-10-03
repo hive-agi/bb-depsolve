@@ -46,7 +46,9 @@
 
    Entries are keyed on their CANONICAL coordinate — the same symbol the
    deps.edn rewrite installs — because a :local/root under any other group id
-   is not an override at all, it is an additional unrelated library.
+   is not an override at all, it is an additional unrelated library. DECLARED
+   (the libs the project's deps.edn names, `v/declared-libs`) decides that
+   coordinate before any directory-based guess.
 
    A canonical coordinate is emitted AT MOST ONCE. `find-local-deps` reports
    every :local/root OCCURRENCE, so one lib appearing in both :deps and an
@@ -57,19 +59,20 @@
    argument not starting with `{` as a FILE PATH, so a leading comment makes
    `clj -Sdeps \"$(cat local.deps.edn)\"` fail with the file echoed back as a
    would-be path. Header therefore goes AFTER the map."
-  [local-entries org]
-  (let [deps-str (->> local-entries
-                      (reduce (fn [{:keys [seen lines] :as acc} {:keys [lib path]}]
-                                (let [canonical (v/canonical-lib lib path org)]
-                                  (if (contains? seen canonical)
-                                    acc
-                                    {:seen (conj seen canonical)
-                                     :lines (conj lines (str "  " canonical
-                                                             " {:local/root \"" path "\"}"))})))
-                              {:seen #{} :lines []})
-                      :lines
-                      (str/join "\n"))]
-    (str "{:deps\n {" (str/trim deps-str) "}}\n\n" local-deps-header)))
+  ([local-entries org] (generate-local-deps-edn local-entries org nil))
+  ([local-entries org declared]
+   (let [deps-str (->> local-entries
+                       (reduce (fn [{:keys [seen lines] :as acc} {:keys [lib path]}]
+                                 (let [canonical (v/canonical-lib lib path org declared)]
+                                   (if (contains? seen canonical)
+                                     acc
+                                     {:seen (conj seen canonical)
+                                      :lines (conj lines (str "  " canonical
+                                                              " {:local/root \"" path "\"}"))})))
+                               {:seen #{} :lines []})
+                       :lines
+                       (str/join "\n"))]
+     (str "{:deps\n {" (str/trim deps-str) "}}\n\n" local-deps-header))))
 
 (defn- read-local-deps
   "Existing local.deps.edn content for a project, or nil."
@@ -96,8 +99,9 @@
 
    A git tag is the fallback, not the preference: the house rule is that a
    committed dep file carries :mvn/version, so a lib that is on a registry must
-   be pinned there even when it also has tags."
-  [root-dir lib path org]
+   be pinned there even when it also has tags. DECLARED is the set of libs the
+   dep file names, which decides the canonical coordinate of a git re-pin."
+  [root-dir lib path org declared]
   (let [mvn (registries/resolve-mvn-latest lib false)]
     (if (r/ok? mvn)
       {:kind :mvn :version (:ok mvn)}
@@ -115,7 +119,7 @@
                                               (v/latest-tag (:ok tags)))
                 use-sha (or sha-short (when (and sha (> (count sha) 12)) (subs sha 0 7)) sha)]
             (when tag {:kind :git :tag tag :sha use-sha
-                       :canonical (v/canonical-lib lib path org)})))))))
+                       :canonical (v/canonical-lib lib path org declared)})))))))
 
 (defn- fix-file!
   "Repair one dep file. Alias-scoped hits move to local.deps.edn; top-level hits
@@ -123,6 +127,7 @@
   [{:keys [file project-dir hits root-dir org]}]
   (let [{alias-hits :alias deps-hits :deps} (group-by #(:kind (:scope %)) hits)
         content  (atom (slurp file))
+        declared (v/declared-libs @content)
         changed? (atom false)]
 
     (doseq [alias-kw (distinct (map #(:alias (:scope %)) alias-hits))]
@@ -137,7 +142,7 @@
           (println (ui/c :yellow (str "  Could not extract alias " alias-kw ", move it manually"))))))
 
     (doseq [{:keys [lib path]} deps-hits]
-      (if-let [{:keys [kind version tag sha canonical]} (resolve-published root-dir lib path org)]
+      (if-let [{:keys [kind version tag sha canonical]} (resolve-published root-dir lib path org declared)]
         (do (swap! content #(if (= :mvn kind)
                               (v/replace-local-with-mvn % lib version)
                               (v/replace-local-with-git % lib tag sha canonical)))
