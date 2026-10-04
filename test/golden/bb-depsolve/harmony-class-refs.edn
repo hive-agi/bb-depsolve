@@ -1,0 +1,9 @@
+{:empty #{},
+ :foreign-library #{"clojure/data/json$fn__1009"},
+ :mixed
+ #{"clojure/data/json$fn__1009"
+   "clojure/core$seq_QMARK___5492"
+   "clojure/core/async$pipe__1234"},
+ :nested-namespace #{"clojure/core/async$pipe__1234"},
+ :stable-is-not-versioned #{},
+ :versioned-only #{"clojure/core$seq_QMARK___5492"}}
