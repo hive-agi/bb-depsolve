@@ -11,6 +11,8 @@
             [hive-dsl.result :as r]
             [hive-weave.parallel :as par]
             [bb-depsolve.core.upgrade.guard :as guard]
+            [bb-depsolve.harmony.api :as harmony]
+            [bb-depsolve.harmony.plan :as harmony-plan]
             [bb-depsolve.version.repos :as repos]
             [bb-depsolve.core.pins :as pins]))
 
@@ -55,7 +57,7 @@
   [held]
   (when (seq held)
     (println (ui/c :yellow (format "%d upgrade(s) HELD, not applied:" (count held))))
-    (doseq [{:keys [lib old-version new-version reason registry project pin]}
+    (doseq [{:keys [lib old-version new-version reason registry project pin] harm :harmony}
             (sort-by (juxt (comp str :lib) :project) held)]
       (printf "  %-40s %s -> %s  %s  (%s)\n"
               (str lib)
@@ -68,9 +70,40 @@
                                                 ", which this project does not declare")
                               :pinned      (str "pinned in " pins/default-file-name
                                                 (when-let [r (:reason pin)] (str ": " r)))
+                              :disharmony  (harmony-plan/explain harm)
                               (str reason)))
               project))
     (println)))
+
+(defn- project-clojure-versions
+  "{project -> the org.clojure/clojure version it pins today}, from the same
+   FILE-DEPS the plan was built from — the check must judge a row against the
+   Clojure this project actually declares, not the workspace's most common one."
+  [file-deps]
+  (into {} (for [{:keys [project lib version]} file-deps
+                 :when (= lib harmony/clojure-lib)]
+             [project version])))
+
+(defn- harmony-findings
+  "{upgrade-row -> harmony finding} for the rows that could break AOT harmony.
+
+   Action: resolves each candidate project's classpath and reads jar bytes.
+   Runs only over rows `harmony/relevant-row?` admits, and prints what it is
+   doing, because a classpath resolve is the one step here that can take
+   seconds and a silent pause reads as a hang."
+  [upgrades file-deps]
+  (let [clj-by-project (project-clojure-versions file-deps)
+        candidates (filterv harmony/relevant-row? upgrades)]
+    (when (seq candidates)
+      (println (ui/c :dim (format "  Checking AOT harmony for %d candidate row(s)..."
+                                  (count candidates)))))
+    (into {}
+          (keep (fn [{:keys [path project] :as row}]
+                  (when-let [f (harmony/check-row row
+                                                 (str (fs/parent path))
+                                                 (get clj-by-project project))]
+                    [row f])))
+          candidates)))
 
 (defn- choice-line
   [{:keys [lib old-version new-version projects]}]
@@ -107,9 +140,16 @@
      --apply          write the changes; without a TTY it refuses unless --all
                       or --only names the selection
      --commit         auto-commit the changed dep files
+     --no-harmony     skip the AOT-harmony check (see below)
 
    A lib named in the workspace's pins file is reported HELD with the reason
-   recorded there, rather than offered again on every run. See `pins`."
+   recorded there, rather than offered again on every run. See `pins`.
+
+   A row that would put a project's AOT-compiled jars out of step with its
+   Clojure is held with reason :disharmony, naming the jar and a class the new
+   version no longer ships. Version numbers cannot express that constraint —
+   only the bytes can — so it is read from them. See `bb-depsolve.harmony.api`
+   and the `harmony` command."
   ([ctx] (upgrade-cmd (live/live-resolver) ctx))
   ([resolver {:keys [opts]}]
    (let [{:keys [root apply commit skip-dirs depth pre-release project org]
@@ -171,8 +211,13 @@
              (println (ui/c :dim (str "    " lib)))))
          (println)
 
-         (let [{:keys [upgrades held]} (guard/plan file-deps latest
-                                                   (assoc opts :pins (pins/read-pins root-dir)))]
+         (let [planned (guard/plan file-deps latest
+                                   (assoc opts :pins (pins/read-pins root-dir)))
+               {:keys [upgrades held]}
+               (if (:no-harmony opts)
+                 planned
+                 (guard/hold-disharmonious
+                  planned (harmony-findings (:upgrades planned) file-deps)))]
 
            (print-held! held)
 
