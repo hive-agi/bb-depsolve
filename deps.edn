@@ -5,13 +5,13 @@
         org.babashka/cli {:mvn/version "0.12.91"}
         cheshire/cheshire {:mvn/version "6.2.0"}
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
-        io.github.hive-agi/hive-dsl {:mvn/version "0.5.34"}
+        io.github.hive-agi/hive-dsl {:mvn/version "0.5.36"}
         metosin/malli {:mvn/version "0.20.2"}
-        io.github.hive-agi/hive-spi {:mvn/version "1.4.2"}
-        io.github.hive-agi/hive-schemas {:mvn/version "0.1.39"}
-        io.github.hive-agi/hive-weave {:mvn/version "0.4.1"}
+        io.github.hive-agi/hive-spi {:mvn/version "1.4.4"}
+        io.github.hive-agi/hive-schemas {:mvn/version "0.1.40"}
+        io.github.hive-agi/hive-weave {:mvn/version "0.4.2"}
         org.clojure/data.xml {:mvn/version "0.2.0-alpha9"}
-        rewrite-clj/rewrite-clj {:mvn/version "1.3.58"}}
+        rewrite-clj/rewrite-clj {:mvn/version "1.3.59"}}
  :aliases
  {  ;; :build — tools.build entrypoint (clojure -T:build <task>). Canonical hive
   ;; build: jar / jar-aot / install / bump / verify-license / deploy.
@@ -29,7 +29,7 @@
  :extra-deps {org.clojure/clojure {:mvn/version "1.12.6"}
               pfeodrippe/recife {:mvn/version "0.22.0"}
               io.github.hive-agi/hive-recife {:git/tag "v0.1.20" :git/sha "28bb64f"}
-              io.github.hive-agi/hive-spi {:mvn/version "1.4.2"}}
+              io.github.hive-agi/hive-spi {:mvn/version "1.4.4"}}
  :main-opts ["-m" "bb-depsolve.sync-model"]}
   :dev {:extra-paths ["dev" "test"]
           :extra-deps {org.clojure/test.check {:mvn/version "1.1.3"}}}
@@ -37,5 +37,5 @@
                    :extra-deps {org.clojure/clojure {:mvn/version "1.12.6"}
                                 pfeodrippe/recife {:mvn/version "0.22.0"}
                                 io.github.hive-agi/hive-recife {:git/tag "v0.1.20" :git/sha "28bb64f"}
-                                io.github.hive-agi/hive-spi {:mvn/version "1.4.2"}}
+                                io.github.hive-agi/hive-spi {:mvn/version "1.4.4"}}
                    :main-opts ["-m" "bb-depsolve.cascade-model"]}}}
