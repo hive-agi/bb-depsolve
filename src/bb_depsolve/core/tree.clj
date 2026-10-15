@@ -91,9 +91,16 @@
              (let [lines (v/format-dep-tree tree conflicts)]
                (doseq [line lines] (println line))))
 
-           (do (when-let [failed (seq (unresolved-libs tree))] (println (ui/c :yellow (str "  Unresolved (" (count failed) ", children not fetched): " (str/join ", " (map (fn [[l ver]] (str l " " ver)) failed)))))) (when (seq conflicts) (when-not conflicts-only (println)) (println (ui/c :yellow (str "  " (count conflicts) " conflict(s):"))) (doseq [[lib versions] (sort-by (comp str key) conflicts)]
+           (when-let [failed (seq (unresolved-libs tree))]
+             (println (ui/c :yellow (str "  Unresolved (" (count failed) ", children not fetched): "
+                                         (str/join ", " (map (fn [[l ver]] (str l " " ver)) failed))))))
+
+           (when (seq conflicts)
+             (when-not conflicts-only (println))
+             (println (ui/c :yellow (str "  " (count conflicts) " conflict(s):")))
+             (doseq [[lib versions] (sort-by (comp str key) conflicts)]
                (println (str "    " (ui/c :yellow (str lib)) " — "
-                             (str/join " vs " (sort v/version-compare (seq versions))))))))
+                             (str/join " vs " (sort v/version-compare (seq versions)))))))
 
            (when resolved
              (println)
