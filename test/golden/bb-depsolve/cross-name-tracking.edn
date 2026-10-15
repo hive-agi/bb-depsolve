@@ -1,0 +1,8 @@
+{:cross-name
+ {:branch "main", :upstream-branch "master", :remote "gitea"},
+ :detached nil,
+ :same-name nil,
+ :slashed-cross
+ {:branch "tw8/a", :upstream-branch "tw8/b", :remote "origin"},
+ :slashed-same nil,
+ :untracked nil}

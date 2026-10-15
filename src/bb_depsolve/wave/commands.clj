@@ -66,6 +66,10 @@
    out by a rejected push. The branch push is the verdict; the tag push is
    reported beside it, never folded into it.
 
+   Preflight: a local branch that tracks an upstream of a different name
+   (local `main` -> `gitea/master`) is reported as a warning. It is never
+   renamed or fixed here.
+
    --sync     MERGE an upstream that has moved ahead instead of skipping the
               project. A project whose working tree has modifications to a
               file the incoming commits touch is skipped: that tree belongs to
@@ -131,7 +135,12 @@
                          :ahead ahead
                          :behind behind
                          :dirty-files (git/git-dirty-files dir)
-                         :incoming-files (when upstream (git/git-incoming-files dir upstream))})]]
+                         :incoming-files (when upstream (git/git-incoming-files dir upstream))})
+                  cross (push/cross-name-tracking (git/git-tracking dir))]]
+      (when cross
+        (println (ui/c :yellow (format "  %-24s warning — local %s tracks %s/%s (cross-name)"
+                                       project (:branch cross) (:remote cross)
+                                       (:upstream-branch cross)))))
       (case (:action plan)
         :skip
         (do (bump! :skipped)

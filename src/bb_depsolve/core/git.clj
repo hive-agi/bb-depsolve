@@ -45,6 +45,21 @@
       (let [ref (str/trim (:out result))]
         (when-not (str/blank? ref) ref)))))
 
+(defn git-tracking
+  "Tracking metadata of the current branch, read from git config so branch
+   names containing slashes are exact: {:branch :merge-ref :remote}.
+   :branch is nil on a detached HEAD; :merge-ref and :remote are nil when the
+   branch tracks nothing."
+  [project-dir]
+  (let [out (fn [& args]
+              (let [r (apply git project-dir args)]
+                (when (zero? (:exit r))
+                  (let [s (str/trim (:out r))] (when-not (str/blank? s) s)))))
+        branch (out "symbolic-ref" "--quiet" "--short" "HEAD")]
+    {:branch branch
+     :merge-ref (when branch (out "config" "--get" (str "branch." branch ".merge")))
+     :remote (when branch (out "config" "--get" (str "branch." branch ".remote")))}))
+
 (defn git-ahead-behind
   "Commits ahead of / behind UPSTREAM. Returns {:ahead n :behind n}."
   [project-dir upstream]
