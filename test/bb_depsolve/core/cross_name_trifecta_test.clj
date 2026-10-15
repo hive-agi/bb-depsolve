@@ -54,13 +54,15 @@
 ;; =============================================================================
 
 (defn- reports-exactly-cross-names?
-  [tracking]
-  (let [out (push/cross-name-tracking tracking)
-        upstream (str/replace-first (:merge-ref tracking) "refs/heads/" "")]
-    (if (= (:branch tracking) upstream)
-      (nil? out)
-      (= {:branch (:branch tracking) :upstream-branch upstream :remote (:remote tracking)}
-         out))))
+  "Predicate over the subject's OUTPUT: silence, or a report whose two names
+   really differ and whose upstream name has refs/heads/ stripped."
+  [out]
+  (or (nil? out)
+      (and (map? out)
+           (string? (:branch out))
+           (string? (:upstream-branch out))
+           (not= (:branch out) (:upstream-branch out))
+           (not (str/starts-with? (:upstream-branch out) "refs/heads/")))))
 
 ;; =============================================================================
 ;; Mutations: each must be caught
@@ -114,3 +116,12 @@
 (deftest detached-and-untracked-are-silent-test
   (is (nil? (push/cross-name-tracking detached)))
   (is (nil? (push/cross-name-tracking untracked))))
+
+(deftest reports-exactly-the-cross-named-inputs-test
+  (doseq [t (gen/sample gen-tracking 200)
+          :let [upstream (subs (:merge-ref t) (count "refs/heads/"))
+                out (push/cross-name-tracking t)]]
+    (if (= (:branch t) upstream)
+      (is (nil? out) (str "same name must be silent: " t))
+      (is (= {:branch (:branch t) :upstream-branch upstream :remote (:remote t)} out)
+          (str "cross name must be reported: " t)))))
