@@ -57,7 +57,7 @@
   [held]
   (when (seq held)
     (println (ui/c :yellow (format "%d upgrade(s) HELD, not applied:" (count held))))
-    (doseq [{:keys [lib old-version new-version reason registry project pin] harm :harmony}
+    (doseq [{:keys [lib old-version new-version reason registry project pin unread] harm :harmony}
             (sort-by (juxt (comp str :lib) :project) held)]
       (printf "  %-40s %s -> %s  %s  (%s)\n"
               (str lib)
@@ -68,6 +68,7 @@
                               :downgrade   "refused: moves the pin DOWN"
                               :unreachable (str "only on registry " registry
                                                 ", which this project does not declare")
+                              :unread      (str "registry unread: " (str/join ", " (map :id unread)))
                               :pinned      (str "pinned in " pins/default-file-name
                                                 (when-let [r (:reason pin)] (str ": " r)))
                               :disharmony  (harmony-plan/explain harm)
@@ -197,7 +198,7 @@
                          (printf "\r  [%d/%d] %s" (inc i) (count kept) (ui/c :dim (str lib)))
                          (flush))
                        (if (and result (r/ok? result))
-                         (assoc-in acc [:latest lib] (vec (:ok result)))
+                         (assoc-in acc [:latest lib] (:ok result))
                          (update acc :unresolved conj lib)))
                      {:latest {} :unresolved []}
                      (map vector (range) kept results))]
