@@ -1,0 +1,7 @@
+{:blank-host {},
+ :keywords {"code.corp.example" :gitlab},
+ :nil {},
+ :not-a-map {},
+ :string-provider {"forge.example.org" :gitea},
+ :strings {"git.example.org" :gitea},
+ :unknown-provider {}}

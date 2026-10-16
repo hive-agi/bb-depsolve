@@ -37,6 +37,21 @@
     (and (zero? (:exit result))
          (not (str/blank? (:out result))))))
 
+(defn git-first-remote-url
+  "URL of the project's first remote, or nil when it has none. `origin` wins
+   when present (it is the remote push routing means); otherwise the first
+   remote git lists. Reads git config only, never the network."
+  [project-dir]
+  (let [result (git project-dir "remote")]
+    (when (zero? (:exit result))
+      (let [names  (remove str/blank? (map str/trim (str/split-lines (:out result))))
+            chosen (if (some #{"origin"} names) "origin" (first names))]
+        (when chosen
+          (let [r (git project-dir "remote" "get-url" chosen)]
+            (when (zero? (:exit r))
+              (let [url (str/trim (:out r))]
+                (when-not (str/blank? url) url)))))))))
+
 (defn remote-provider
   "Classify a remote URL without consulting git. OVERRIDES maps lowercase hostnames
    to provider keywords; explicit choices take precedence over built-in hosts.
