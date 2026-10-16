@@ -2,14 +2,11 @@
   "Gated HTTP retrieval of POM and deps.edn artifacts."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
-            [hive-dsl.gate :as gate]
             [hive-dsl.result :as r]
             [bb-depsolve.version.api :as v]
             [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.schema.api :as sch]
             [bb-depsolve.core.auth :as auth]))
-
-(def ^:private http-gate (gate/gate {:permits 5 :timeout-ms 30000}))
 
 (defprotocol IHttpTransport
   "GET for artifact retrieval."
@@ -18,29 +15,30 @@
      registered for TARGET (:clojars, :maven, :github, :none, ...). Throws
      when the request could not be made at all."))
 
-(defrecord GatedHttp [gate get-fn headers-fn]
+(defrecord GatedHttp [get-fn headers-fn]
   IHttpTransport
   (http-get [_ url target]
-    (let [headers (headers-fn target)
-          res (gate/gate-run gate
-                (fn [] (get-fn url (merge {:throw false}
-                                          (when (seq headers) {:headers headers})))))]
-      (if (r/ok? res)
-        (:ok res)
-        (throw (ex-info "gated HTTP request failed" res))))))
+    (let [headers (headers-fn target)]
+      (get-fn url (merge {:throw false}
+                         (when (seq headers) {:headers headers}))))))
 
 (defn gated-http
-  "IHttpTransport that runs every GET under the shared HTTP gate. A gate
-   refusal (timeout / execution failure) throws, so the enclosing
-   `try-effect*` reports an error Result rather than a missing artifact.
+  "IHttpTransport for artifact retrieval. The name is historical. Every GET
+   used to run under a shared hive-dsl HTTP gate (5 permits, 30 s), but every
+   caller was serial and never came near those permits. Concurrency is now
+   bounded where the fan-out happens: hive-weave bounded-pmap in core.sync,
+   core.upgrade, audit and core.tree/fetch-level (convention 20260725130310,
+   kanban 20260725145720-00afadf1). A failed request still throws, so the
+   enclosing `try-effect*` reports an error Result rather than a missing
+   artifact. A timeout is enforced by the caller's fan-out and becomes an
+   :unresolved?/failed entry there.
 
    OPTS:
      :get-fn      (fn [url opts] response)  default babashka.http-client/get
      :headers-fn  (fn [target] headers)     default bb-depsolve.core.auth/auth-headers"
   ([] (gated-http {}))
   ([{:keys [get-fn headers-fn]}]
-   (->GatedHttp http-gate
-                (or get-fn (fn [url opts] (http/get url opts)))
+   (->GatedHttp (or get-fn (fn [url opts] (http/get url opts)))
                 (or headers-fn (fn [target] (auth/auth-headers target))))))
 
 (defn- fetch-pom-xml

@@ -6,7 +6,39 @@
             [bb-depsolve.core.resolver.live :as live]
             [bb-depsolve.cli.ui :as ui]
             [bb-depsolve.version.api :as v]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [hive-weave.parallel :as par]))
+
+(def ^:private fetch-concurrency
+  "Simultaneous POM fetches per tree level. Each one is an HTTP round-trip, so
+   the ceiling is set by politeness to the remote, not by local CPU. Matches
+   core.sync and core.upgrade."
+  8)
+
+(def ^:private fetch-timeout-ms 30000)
+
+(defn fetch-level
+  "The :map-fn `build-dep-tree` runs one level's child lookups through:
+   bounded concurrent fan-out, with results kept positional. A lookup that
+   times out or throws comes back nil, and the tree keeps that dep as
+   :unresolved? instead of dropping it."
+  [f coll]
+  (par/bounded-pmap {:concurrency fetch-concurrency
+                     :timeout-ms  fetch-timeout-ms
+                     :fallback    nil}
+                    f
+                    (vec coll)))
+
+(defn unresolved-libs
+  "Sorted, distinct [lib version] pairs in TREE whose children could not be
+   fetched (nodes `build-dep-tree` marked :unresolved?)."
+  [tree]
+  (->> (tree-seq map? :children {:children tree})
+       (filter :unresolved?)
+       (map (juxt :lib :version))
+       distinct
+       (sort-by str)
+       vec))
 
 (defn tree-cmd
   "Show transitive dependency tree with conflict detection.
@@ -47,7 +79,7 @@
                                (mapv (fn [{:keys [lib tag]}]
                                        {:lib lib :version tag :type :git})
                                      git-deps)))
-             tree (v/build-dep-tree direct-deps resolve-fn tree-depth)
+             tree (v/build-dep-tree direct-deps resolve-fn tree-depth {:map-fn fetch-level})
              resolution (v/resolve-versions tree)
              conflicts (:conflicts resolution)]
 
@@ -58,6 +90,10 @@
            (when-not conflicts-only
              (let [lines (v/format-dep-tree tree conflicts)]
                (doseq [line lines] (println line))))
+
+           (when-let [failed (seq (unresolved-libs tree))]
+             (println (ui/c :yellow (str "  Unresolved (" (count failed) ", children not fetched): "
+                                         (str/join ", " (map (fn [[l ver]] (str l " " ver)) failed))))))
 
            (when (seq conflicts)
              (when-not conflicts-only (println))
