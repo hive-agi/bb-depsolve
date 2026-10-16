@@ -4,8 +4,9 @@
    pinned-dep   {:path :project :lib :version :consumer-repos}
    upgrade-row  {:path :project :lib :old-version :new-version}
    held-row     upgrade-row plus
-                  :reason    :major | :downgrade | :unreachable | :pinned
+                  :reason    :major | :downgrade | :unreachable | :unread | :pinned
                   :registry  repo id (only for :unreachable)
+                  :unread    the reachable failed registry reads (only for :unread)
                   :pin       the pin entry (only for :pinned)"
   (:require [bb-depsolve.version.api :as v]
             [bb-depsolve.version.repos :as repos]
@@ -83,36 +84,46 @@
                 (and (zero? omaj) (= nmaj omaj) (> nmin omin))))))))
 
 (defn consumer-candidate
-  "ROWS ([registry-version]) as one consumer declaring CONSUMER-REPOS sees
-   them, through the same projection `sync` pins with (repos/project-lib).
-   => {:version newest-reachable-or-nil :unreachable [registry-version]}, where
-   :unreachable lists newer versions on registries the consumer does not
-   declare."
-  [rows consumer-repos]
-  (let [rows (vec rows)
-        projected (when (seq rows)
+  "One consumer's view of RESOLUTION {:by-registry :unread}, projected through
+   the same `repos/project-lib` path `sync` pins with. An unread registry the
+   consumer reaches makes even an answered candidate uncertain; it must not
+   move the pin. Returns {:version :unreachable :unread}, with :unread limited
+   to the consumer's own reachable registry failures."
+  [{:keys [by-registry unread]} consumer-repos]
+  (let [rows (vec by-registry)
+        uncertain (filterv #(repos/reachable? consumer-repos %) unread)
+        projected (when (and (seq rows) (empty? uncertain))
                     (repos/project-lib {:mvn-by-registry rows
+                                        :mvn-unread unread
                                         :mvn-version (:version (repos/newest rows))}
                                        (vec consumer-repos)))]
     (if projected
       {:version (:mvn-version projected)
-       :unreachable (vec (:mvn-unreachable projected))}
+       :unreachable (vec (:mvn-unreachable projected))
+       :unread uncertain}
       {:version nil
-       :unreachable (vec (sort-by :version semver/version-compare
-                                  (remove #(repos/reachable? consumer-repos %) rows)))})))
+       :unread uncertain
+       :unreachable (if (seq uncertain)
+                      []
+                      (vec (sort-by :version semver/version-compare
+                                    (remove #(repos/reachable? consumer-repos %) rows))))})))
 
 (defn decide
   "The verdict on one pinned DEP ({:path :project :lib :version}) given the
    consumer's CANDIDATE (see `consumer-candidate`). => nil when nothing moves,
    an upgrade-row, or a held-row:
+     :unread       a registry this consumer reaches did not answer
      :downgrade    the newest reachable version is OLDER than the pin
      :major        a `held-jump?` and OPTS :allow-major is not set
      :unreachable  a newer version exists only on a registry the consumer
                    does not declare"
-  [{:keys [version] :as dep} {cand :version unreachable :unreachable} {:keys [allow-major]}]
+  [{:keys [version] :as dep} {cand :version unreachable :unreachable unread :unread} {:keys [allow-major]}]
   (let [row (-> dep (dissoc :version :consumer-repos) (assoc :old-version version))
         beyond (repos/newest unreachable)]
     (cond
+      (seq unread)
+      (assoc row :new-version (or cand version) :reason :unread :unread unread)
+
       (and cand (v/downgrade-change? {:coord :mvn :old-version version :new-version cand}))
       (assoc row :new-version cand :reason :downgrade)
 
@@ -154,15 +165,16 @@
                  (get split true))}))
 
 (defn plan
-  "Split DEPS ([pinned-dep]) against LATEST ({lib [registry-version]}) into
-   {:upgrades [upgrade-row] :held [held-row]}, both distinct and in DEPS
-   order. A dep whose lib has no rows, or with nothing to move, is in neither.
-   OPTS: :allow-major, :pins."
+  "Split DEPS ([pinned-dep]) against LATEST
+   ({lib {:by-registry [registry-version] :unread [registry-read-failure]}})
+   into {:upgrades [upgrade-row] :held [held-row]}, both distinct and in DEPS
+   order. A dep whose lib has no observation, or with nothing to move, is in
+   neither. OPTS: :allow-major, :pins."
   [deps latest {:keys [pins] :as opts}]
   (let [rows (->> deps
                   (keep (fn [{:keys [lib consumer-repos] :as dep}]
-                          (when-let [lib-rows (seq (get latest lib))]
-                            (some-> (decide dep (consumer-candidate lib-rows consumer-repos) opts)
+                          (when-let [resolution (get latest lib)]
+                            (some-> (decide dep (consumer-candidate resolution consumer-repos) opts)
                                     (hold-pinned pins)))))
                   (distinct))]
     {:upgrades (vec (remove :reason rows))

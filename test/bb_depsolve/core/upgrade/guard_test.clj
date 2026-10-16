@@ -73,16 +73,17 @@
     (is (not (guard/held-jump? "1.0.0" nil)))))
 
 (deftest consumer-candidate-projects-through-declared-registries-test
-  (let [rows [(assoc clojars :version "0.1.0") (assoc gitea :version "0.1.1")]]
+  (let [rows [(assoc clojars :version "0.1.0") (assoc gitea :version "0.1.1")]
+        resolution {:by-registry rows :unread []}]
     (testing "a public-only consumer sees only the public version"
-      (is (= {:version "0.1.0" :unreachable [(assoc gitea :version "0.1.1")]}
-             (guard/consumer-candidate rows []))))
+      (is (= {:version "0.1.0" :unreachable [(assoc gitea :version "0.1.1")] :unread []}
+             (guard/consumer-candidate resolution []))))
     (testing "a consumer declaring the private registry sees its version"
-      (is (= {:version "0.1.1" :unreachable []}
-             (guard/consumer-candidate rows declares-gitea))))
+      (is (= {:version "0.1.1" :unreachable [] :unread []}
+             (guard/consumer-candidate resolution declares-gitea))))
     (testing "nothing reachable"
-      (is (= {:version nil :unreachable [(assoc gitea :version "0.1.1")]}
-             (guard/consumer-candidate [(assoc gitea :version "0.1.1")] []))))))
+      (is (= {:version nil :unreachable [(assoc gitea :version "0.1.1")] :unread []}
+             (guard/consumer-candidate {:by-registry [(assoc gitea :version "0.1.1")]} []))))))
 
 (def ^:private dep {:path "/w/alpha/deps.edn" :project "alpha" :lib 'acme/lib})
 
@@ -112,8 +113,8 @@
     (is (nil? (guard/decide (assoc dep :version "1.2.0") {:version nil :unreachable []} {})))))
 
 (deftest plan-scopes-each-consumer-to-its-registries-test
-  (let [latest {'acme/lib [(assoc clojars :version "1.1.0") (assoc gitea :version "1.2.0")]
-                'big/lib  [(assoc clojars :version "4.0.0")]}
+  (let [latest {'acme/lib {:by-registry [(assoc clojars :version "1.1.0") (assoc gitea :version "1.2.0")]}
+                'big/lib  {:by-registry [(assoc clojars :version "4.0.0")]}}
         deps [{:path "/w/pub/deps.edn" :project "pub" :lib 'acme/lib :version "1.0.0" :consumer-repos []}
               {:path "/w/priv/deps.edn" :project "priv" :lib 'acme/lib :version "1.0.0"
                :consumer-repos declares-gitea}

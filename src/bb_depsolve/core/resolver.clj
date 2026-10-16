@@ -9,9 +9,10 @@
 (defprotocol IVersionResolver
   "Remote version observations. Each method returns a Result."
   (latest-by-registry [this lib allow-pre?]
-    "=> Result of [registry-version]: the latest version of LIB each registry
-     that answered lists, one entry per registry. Errs when none answered or
-     none lists an acceptable version.")
+    "=> Result of {:by-registry [registry-version] :unread [registry-read-failure]}.
+     Keeps failures even when another registry answered, so a consumer can
+     withhold an uncertain pin. Errs when none answered or none lists an
+     acceptable version and no registry was unread.")
   (dep-children [this lib version]
     "=> Result of [dep-coord]: the direct dependencies of LIB at VERSION."))
 
@@ -27,8 +28,8 @@
   ([resolver lib allow-pre?]
    (resolve-latest resolver lib allow-pre? latest-of))
   ([resolver lib allow-pre? select]
-   (r/let-ok [rows (latest-by-registry resolver lib allow-pre?)]
-     (r/ok (select rows)))))
+   (r/let-ok [{:keys [by-registry]} (latest-by-registry resolver lib allow-pre?)]
+     (r/ok (select by-registry)))))
 
 (defn children-or-empty
   "The dep-coords RESOLVER reports for LIB at VERSION; [] when it errs."
@@ -40,13 +41,15 @@
 ;; In-memory adapter
 ;; =============================================================================
 
-(defrecord MemoryResolver [latest children calls]
+(defrecord MemoryResolver [latest unread children calls]
   IVersionResolver
   (latest-by-registry [_ lib allow-pre?]
     (swap! calls conj [:latest-by-registry lib allow-pre?])
-    (if-let [rows (get latest lib)]
-      (r/ok (vec rows))
-      (r/err :io/no-published-version {:lib lib :allow-pre? allow-pre?})))
+    (let [rows (get latest lib)
+          failures (get unread lib)]
+      (if (or (seq rows) (seq failures))
+        (r/ok {:by-registry (vec rows) :unread (vec failures)})
+        (r/err :io/no-published-version {:lib lib :allow-pre? allow-pre?}))))
 
   (dep-children [_ lib version]
     (swap! calls conj [:dep-children lib version])
@@ -59,9 +62,10 @@
 
    OPTS:
      :latest    {lib [registry-version]}  a lib absent here errs
+     :unread    {lib [registry-read-failure]}  failures even when rows exist
      :children  {[lib version] [dep-coord]}  a pair absent here errs
 
    Every call is recorded, in order, at @(:calls resolver)."
   ([] (memory-resolver {}))
-  ([{:keys [latest children]}]
-   (->MemoryResolver (or latest {}) (or children {}) (atom []))))
+  ([{:keys [latest unread children]}]
+   (->MemoryResolver (or latest {}) (or unread {}) (or children {}) (atom []))))
