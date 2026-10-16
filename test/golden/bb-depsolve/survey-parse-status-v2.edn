@@ -1,0 +1,42 @@
+{:detached
+ {:branch nil,
+  :upstream nil,
+  :ahead nil,
+  :behind nil,
+  :dirty 0,
+  :untracked 0},
+ :dirty-mixed
+ {:branch "main",
+  :upstream "origin/main",
+  :ahead 2,
+  :behind 1,
+  :dirty 3,
+  :untracked 2},
+ :empty
+ {:branch nil,
+  :upstream nil,
+  :ahead nil,
+  :behind nil,
+  :dirty 0,
+  :untracked 0},
+ :no-upstream
+ {:branch "topic",
+  :upstream nil,
+  :ahead nil,
+  :behind nil,
+  :dirty 0,
+  :untracked 0},
+ :tracking-clean
+ {:branch "main",
+  :upstream "origin/main",
+  :ahead 2,
+  :behind 1,
+  :dirty 0,
+  :untracked 0},
+ :unborn
+ {:branch "main",
+  :upstream nil,
+  :ahead nil,
+  :behind nil,
+  :dirty 0,
+  :untracked 0}}
