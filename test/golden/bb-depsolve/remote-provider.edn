@@ -1,0 +1,7 @@
+{:bitbucket :bitbucket,
+ :gitea-git :gitea,
+ :github-https :github,
+ :github-ssh :github,
+ :gitlab-ssh :gitlab,
+ :malformed :other,
+ :unknown :other}

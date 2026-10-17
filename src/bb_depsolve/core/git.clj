@@ -37,6 +37,45 @@
     (and (zero? (:exit result))
          (not (str/blank? (:out result))))))
 
+(defn git-first-remote-url
+  "URL of the project's first remote, or nil when it has none. `origin` wins
+   when present (it is the remote push routing means); otherwise the first
+   remote git lists. Reads git config only, never the network."
+  [project-dir]
+  (let [result (git project-dir "remote")]
+    (when (zero? (:exit result))
+      (let [names  (remove str/blank? (map str/trim (str/split-lines (:out result))))
+            chosen (if (some #{"origin"} names) "origin" (first names))]
+        (when chosen
+          (let [r (git project-dir "remote" "get-url" chosen)]
+            (when (zero? (:exit r))
+              (let [url (str/trim (:out r))]
+                (when-not (str/blank? url) url)))))))))
+
+(defn remote-provider
+  "Classify a remote URL without consulting git. OVERRIDES maps lowercase hostnames
+   to provider keywords; explicit choices take precedence over built-in hosts.
+   SCP-style SSH, URI-form SSH, HTTPS, and git protocol URLs are accepted.
+   Unknown or malformed hosts return :other, never an inferred GitHub provider."
+  ([url] (remote-provider url {}))
+  ([url overrides]
+   (let [url (str/trim (or url ""))
+         host (try
+                (if (str/includes? url "://")
+                  (.getHost (java.net.URI. url))
+                  (when (and (str/includes? url "@") (str/includes? url ":"))
+                    (let [authority (first (str/split url #":" 2))]
+                      (second (str/split authority #"@" 2)))))
+                (catch Exception _ nil))
+         host (some-> host str/lower-case)]
+     (or (get overrides host)
+         (cond
+           (= host "github.com") :github
+           (or (= host "gitlab.com") (str/starts-with? (or host "") "gitlab.")) :gitlab
+           (= host "bitbucket.org") :bitbucket
+           (or (= host "gitea.com") (str/starts-with? (or host "") "gitea.")) :gitea
+           :else :other)))))
+
 (defn git-upstream
   "Upstream ref of the current branch (e.g. \"origin/main\"), or nil."
   [project-dir]
