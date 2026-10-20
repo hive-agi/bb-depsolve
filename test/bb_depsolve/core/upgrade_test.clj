@@ -306,6 +306,26 @@
         "the newest version the consumer can reach is older than its pin")
     (is (= before (slurp deps)) "--all never writes a downgrade")))
 
+(deftest upgrade-cmd-holds-only-consumers-with-unread-registries-test
+  (let [root (workspace
+              [["pub" "deps.edn" "{:deps {acme/lib {:mvn/version \"1.0.0\"}}}"]
+               ["priv" "deps.edn" (str "{:mvn/repos {\"gitea\" {:url \"" gitea-url "\"}}\n"
+                                       " :deps {acme/lib {:mvn/version \"1.0.0\"}}}")]])
+        pub (str (fs/path root "pub" "deps.edn"))
+        priv (str (fs/path root "priv" "deps.edn"))
+        before (slurp priv)
+        res (resolver/memory-resolver
+             {:latest {'acme/lib [{:id "clojars" :public? true :version "1.1.0"}]}
+              :unread {'acme/lib [{:id "gitea" :url gitea-url :public? false
+                                   :error :io/unread :status 503}]}})
+        [out exits] (run-no-tty res {:root root :apply true :all true :allow-major true})]
+    (is (= [] exits))
+    (is (str/includes? out "registry unread: gitea  (priv)")
+        "a reachable unread registry is named, even when Clojars answered")
+    (is (str/includes? (slurp pub) "acme/lib {:mvn/version \"1.1.0\"}")
+        "a consumer that does not declare gitea still upgrades")
+    (is (= before (slurp priv)) "--all cannot write the uncertain consumer's pin")))
+
 (deftest resolve-latest-selection-is-injectable-test
   (let [res (resolver/memory-resolver
              {:latest (assoc latest 'priv/lib [{:id "clojars" :public? true :version "0.1.0"}

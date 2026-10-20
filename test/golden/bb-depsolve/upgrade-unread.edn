@@ -1,0 +1,31 @@
+{:all-answered
+ {:upgrades
+  [{:path "/w/deps.edn",
+    :project "w",
+    :lib acme/lib,
+    :old-version "1.0.0",
+    :new-version "1.1.0"}],
+  :held []},
+ :reachable-unread
+ {:upgrades [],
+  :held
+  [{:path "/w/deps.edn",
+    :project "w",
+    :lib acme/lib,
+    :old-version "1.0.0",
+    :new-version "1.0.0",
+    :reason :unread,
+    :unread
+    [{:id "gitea",
+      :url "https://git.example.com/maven",
+      :public? false,
+      :error :io/unread,
+      :status 503}]}]},
+ :unreachable-unread
+ {:upgrades
+  [{:path "/w/deps.edn",
+    :project "w",
+    :lib acme/lib,
+    :old-version "1.0.0",
+    :new-version "1.1.0"}],
+  :held []}}

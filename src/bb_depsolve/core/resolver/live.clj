@@ -10,7 +10,11 @@
 (defrecord LiveResolver [cache]
   resolver/IVersionResolver
   (latest-by-registry [_ lib allow-pre?]
-    (registries/resolve-mvn-by-registry lib (boolean allow-pre?)))
+    (let [{:keys [versions unread]} (registries/resolve-mvn-reads lib (boolean allow-pre?))]
+      (cond
+        (or (seq versions) (seq unread))
+        (r/ok {:by-registry (vec (sort-by :id versions)) :unread (vec unread)})
+        :else (r/err :io/no-published-version {:lib lib :allow-pre? allow-pre?}))))
 
   (dep-children [_ lib version]
     (r/ok (resolve/resolve-dep-children cache lib version))))

@@ -1,0 +1,7 @@
+{:mismatch {:level :fail, :abort? false},
+ :mismatch-strict {:level :fail, :abort? true},
+ :unavailable {:level :warn, :abort? false},
+ :unavailable-strict {:level :fail, :abort? true},
+ :unknown-status {:level :fail, :abort? false},
+ :verified {:level :ok, :abort? false},
+ :verified-strict {:level :ok, :abort? false}}

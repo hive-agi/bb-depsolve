@@ -10,21 +10,49 @@
    resolve-fn: (fn [lib version] -> [{:lib :version :type}]) returns children.
    max-depth: recursion limit (0 = direct deps only, no children resolved).
    seen: set of already-visited [lib version] to avoid cycles.
-   Returns vec of tree nodes: {:lib :version :type :children [...] :cycle? bool}."
+   Returns vec of tree nodes: {:lib :version :type :children [...] :cycle? bool}.
+
+   OPTS (4- and 6-arity) carries :map-fn, (fn [f coll] -> positional results),
+   which runs one level's resolve-fn calls. The default is `mapv`, so this
+   namespace stays pure; the tree command injects a bounded parallel map so
+   sibling POM fetches overlap instead of running one round-trip at a time.
+   Only the resolve calls go through map-fn, and the recursion happens outside
+   it, so a fan-out never nests inside another one and each item's timeout
+   covers exactly one fetch. A map-fn may answer nil for an item it could not
+   finish (a timeout or a throw); that dep is kept in place with :children []
+   and :unresolved? true, so a failure is reported where it happened rather
+   than filtered out of the tree."
   ([deps resolve-fn max-depth]
-   (build-dep-tree deps resolve-fn max-depth 0 #{}))
+   (build-dep-tree deps resolve-fn max-depth {}))
+  ([deps resolve-fn max-depth opts]
+   (build-dep-tree deps resolve-fn max-depth 0 #{} opts))
   ([deps resolve-fn max-depth current-depth seen]
-   (->> deps
-        (mapv (fn [{:keys [lib version] :as dep}]
-                (let [key [lib version]]
-                  (if (or (and max-depth (>= current-depth max-depth))
-                          (contains? seen key))
-                    (assoc dep :children [] :cycle? (contains? seen key))
-                    (let [children (resolve-fn lib version)
-                          child-tree (build-dep-tree children resolve-fn max-depth
-                                                     (inc current-depth)
-                                                     (conj seen key))]
-                      (assoc dep :children child-tree :cycle? false)))))))))
+   (build-dep-tree deps resolve-fn max-depth current-depth seen {}))
+  ([deps resolve-fn max-depth current-depth seen {:keys [map-fn] :as opts}]
+   (let [map-fn  (or map-fn mapv)
+         deps    (vec deps)
+         stop?   (fn [{:keys [lib version]}]
+                   (or (and max-depth (>= current-depth max-depth))
+                       (contains? seen [lib version])))
+         to-open (filterv (complement stop?) deps)
+         ;; One positional result per opened dep: {:children [...]} or nil.
+         fetched (zipmap (map (juxt :lib :version) to-open)
+                         (map-fn (fn [{:keys [lib version]}]
+                                   {:children (resolve-fn lib version)})
+                                 to-open))]
+     (mapv (fn [{:keys [lib version] :as dep}]
+             (let [key [lib version]]
+               (if (stop? dep)
+                 (assoc dep :children [] :cycle? (contains? seen key))
+                 (if-let [{:keys [children]} (get fetched key)]
+                   (assoc dep
+                          :children (build-dep-tree children resolve-fn max-depth
+                                                    (inc current-depth)
+                                                    (conj seen key)
+                                                    opts)
+                          :cycle? false)
+                   (assoc dep :children [] :cycle? false :unresolved? true)))))
+           deps))))
 
 (defn find-conflicts
   "Walk a dep tree, find libs appearing with multiple versions.

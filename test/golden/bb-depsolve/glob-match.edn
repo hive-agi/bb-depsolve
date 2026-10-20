@@ -1,0 +1,11 @@
+{:backtrack true,
+ :case-insensitive true,
+ :empty-pattern false,
+ :leading-star true,
+ :literal true,
+ :literal-miss false,
+ :middle-star true,
+ :question true,
+ :star-alone true,
+ :star-spans-slashes true,
+ :trailing-star true}

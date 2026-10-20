@@ -1,0 +1,14 @@
+{:empty-policy {:push? true, :reason :allowed, :pattern nil},
+ :exclude-outranks-include
+ {:push? false, :reason :excluded, :pattern "gitea"},
+ :excluded-by-host-glob
+ {:push? false, :reason :excluded, :pattern "gitea.*"},
+ :excluded-by-provider
+ {:push? false, :reason :excluded, :pattern "gitea"},
+ :excluded-by-url-glob
+ {:push? false, :reason :excluded, :pattern "*://gitea.example.org/*"},
+ :included {:push? true, :reason :allowed, :pattern nil},
+ :not-included {:push? false, :reason :not-included, :pattern nil},
+ :other-forge-passes {:push? true, :reason :allowed, :pattern nil},
+ :override-classifies
+ {:push? false, :reason :excluded, :pattern "gitea"}}

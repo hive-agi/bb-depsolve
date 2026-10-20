@@ -1,0 +1,36 @@
+{:detached
+ {:status :detached,
+  :current nil,
+  :default "main",
+  :source :origin-head,
+  :pr-flow? false},
+ :fallback-ambiguous
+ {:status :unknown,
+  :current "main",
+  :default nil,
+  :source :none,
+  :pr-flow? false},
+ :fallback-single
+ {:status :on-default,
+  :current "master",
+  :default "master",
+  :source :fallback,
+  :pr-flow? false},
+ :feature-branch
+ {:status :off-default,
+  :current "staging",
+  :default "main",
+  :source :origin-head,
+  :pr-flow? true},
+ :forge-beats-head
+ {:status :off-default,
+  :current "main",
+  :default "master",
+  :source :forge,
+  :pr-flow? true},
+ :on-main
+ {:status :on-default,
+  :current "main",
+  :default "main",
+  :source :origin-head,
+  :pr-flow? false}}

@@ -102,7 +102,7 @@
    :lib 'org.clojure/core.cache :version "1.2.263" :consumer-repos []})
 
 (def ^:private latest
-  {'org.clojure/core.cache [{:id "central" :version "1.2.999" :public? true}]})
+  {'org.clojure/core.cache {:by-registry [{:id "central" :version "1.2.999" :public? true}]}})
 
 (deftest an-unpinned-lib-is-offered-as-usual-test
   (let [{:keys [upgrades held]} (guard/plan [dep] latest {})]
@@ -129,7 +129,7 @@
 
 (deftest a-pin-beats-the-reason-the-version-policy-would-have-given-test
   (let [major-dep (assoc dep :version "0.2.0")
-        major-latest {'org.clojure/core.cache [{:id "central" :version "0.4.0" :public? true}]}]
+        major-latest {'org.clojure/core.cache {:by-registry [{:id "central" :version "0.4.0" :public? true}]}}]
     (testing "without a pin the jump is held as a pre-1.0 minor"
       (is (= [:major] (mapv :reason (:held (guard/plan [major-dep] major-latest {}))))))
     (testing "with a pin the operator's recorded decision is what gets reported"

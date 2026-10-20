@@ -3,7 +3,9 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as proc]
             [bb-depsolve.cli.ui :as ui]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-depsolve.core.verify :as verify]
+            [hive-dsl.result :as r]))
 
 (defn git
   "Run a git command in project-dir. Returns process result map.
@@ -37,6 +39,52 @@
     (and (zero? (:exit result))
          (not (str/blank? (:out result))))))
 
+(defn git-first-remote-url
+  "URL of the project's first remote, or nil when it has none. `origin` wins
+   when present (it is the remote push routing means); otherwise the first
+   remote git lists. Reads git config only, never the network."
+  [project-dir]
+  (let [result (git project-dir "remote")]
+    (when (zero? (:exit result))
+      (let [names  (remove str/blank? (map str/trim (str/split-lines (:out result))))
+            chosen (if (some #{"origin"} names) "origin" (first names))]
+        (when chosen
+          (let [r (git project-dir "remote" "get-url" chosen)]
+            (when (zero? (:exit r))
+              (let [url (str/trim (:out r))]
+                (when-not (str/blank? url) url)))))))))
+
+(defn remote-host
+  "Lowercase hostname of a remote URL, or nil when it has none or is malformed.
+   SCP-style SSH, URI-form SSH, HTTPS, and git protocol URLs are accepted.
+   Pure: never consults git."
+  [url]
+  (let [url  (str/trim (or url ""))
+        host (try
+               (if (str/includes? url "://")
+                 (.getHost (java.net.URI. url))
+                 (when (and (str/includes? url "@") (str/includes? url ":"))
+                   (let [authority (first (str/split url #":" 2))]
+                     (second (str/split authority #"@" 2)))))
+               (catch Exception _ nil))]
+    (some-> host str/lower-case)))
+
+(defn remote-provider
+  "Classify a remote URL without consulting git. OVERRIDES maps lowercase hostnames
+   to provider keywords; explicit choices take precedence over built-in hosts.
+   SCP-style SSH, URI-form SSH, HTTPS, and git protocol URLs are accepted.
+   Unknown or malformed hosts return :other, never an inferred GitHub provider."
+  ([url] (remote-provider url {}))
+  ([url overrides]
+   (let [host (remote-host url)]
+     (or (get overrides host)
+         (cond
+           (= host "github.com") :github
+           (or (= host "gitlab.com") (str/starts-with? (or host "") "gitlab.")) :gitlab
+           (= host "bitbucket.org") :bitbucket
+           (or (= host "gitea.com") (str/starts-with? (or host "") "gitea.")) :gitea
+           :else :other)))))
+
 (defn git-upstream
   "Upstream ref of the current branch (e.g. \"origin/main\"), or nil."
   [project-dir]
@@ -44,6 +92,21 @@
     (when (zero? (:exit result))
       (let [ref (str/trim (:out result))]
         (when-not (str/blank? ref) ref)))))
+
+(defn git-tracking
+  "Tracking metadata of the current branch, read from git config so branch
+   names containing slashes are exact: {:branch :merge-ref :remote}.
+   :branch is nil on a detached HEAD; :merge-ref and :remote are nil when the
+   branch tracks nothing."
+  [project-dir]
+  (let [out (fn [& args]
+              (let [r (apply git project-dir args)]
+                (when (zero? (:exit r))
+                  (let [s (str/trim (:out r))] (when-not (str/blank? s) s)))))
+        branch (out "symbolic-ref" "--quiet" "--short" "HEAD")]
+    {:branch branch
+     :merge-ref (when branch (out "config" "--get" (str "branch." branch ".merge")))
+     :remote (when branch (out "config" "--get" (str "branch." branch ".remote")))}))
 
 (defn git-ahead-behind
   "Commits ahead of / behind UPSTREAM. Returns {:ahead n :behind n}."
@@ -101,6 +164,50 @@
   [project-dir]
   {:branch (git project-dir "push")
    :tags   (git project-dir "push" "--tags")})
+
+(defn- git-out
+  "Trimmed stdout of a git command in project-dir, or nil on failure or silence."
+  [project-dir & args]
+  (let [r (apply git project-dir args)]
+    (when (zero? (:exit r))
+      (let [s (str/trim (:out r))] (when-not (str/blank? s) s)))))
+
+(defrecord GitPushProbe []
+  verify/IPushProbe
+  (expected-refs [_ project-dir]
+    (let [{:keys [merge-ref remote]} (git-tracking project-dir)
+          head (git-out project-dir "rev-parse" "HEAD")]
+      (when (and head remote (str/starts-with? (or merge-ref "") "refs/heads/"))
+        {:remote remote
+         :refs (into [{:ref merge-ref :sha head :kind :branch}]
+                     (for [tag (some-> (git-out project-dir "tag" "--points-at" "HEAD")
+                                       str/split-lines)
+                           :let [t (str/trim tag)
+                                 sha (git-out project-dir "rev-parse" (str "refs/tags/" t))]
+                           :when sha]
+                       {:ref (str "refs/tags/" t) :sha sha :kind :tag}))})))
+  (remote-refs [_ project-dir remote]
+    (let [r (try
+              (proc/sh {:dir (str project-dir)
+                        :extra-env {"GIT_TERMINAL_PROMPT" "0"}}
+                       "git" "ls-remote" "--heads" "--tags" remote)
+              (catch Exception e {:exit -1 :err (ex-message e)}))]
+      (if (zero? (:exit r))
+        (r/ok (verify/parse-ls-remote (:out r)))
+        (r/err :git/ls-remote-failed
+               {:message (or (->> (str/split-lines (or (:err r) ""))
+                                  (map str/trim)
+                                  (remove str/blank?)
+                                  first)
+                             (str "git ls-remote exited " (:exit r)))})))))
+
+(defn git-push-probe
+  "The git adapter of IPushProbe: expectations from the local repo (HEAD, its
+   tracked branch, the tags that point at HEAD) and observations from a read-only
+   `git ls-remote`. Tags elsewhere in history are not checked: a push of old
+   tags the remote refuses must not read as a failed release."
+  []
+  (->GitPushProbe))
 
 (defn- auto-commit-project!
   "Commit changed dep files in a project with descriptive message.

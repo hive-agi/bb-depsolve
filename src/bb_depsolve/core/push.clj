@@ -52,6 +52,23 @@
           {:action :skip :reason :wip-collision :files (vec (sort clash))}
           {:action :merge-then-push})))))
 
+(defn cross-name-tracking
+  "Report a local branch that tracks an upstream branch of a DIFFERENT name
+   (e.g. local `main` -> `gitea/master`). Pure; reports only, never renames.
+
+   tracking keys: :branch (short local name, slashes allowed), :merge-ref
+   (the branch.<b>.merge value, e.g. \"refs/heads/master\"), :remote.
+   Returns {:branch :upstream-branch :remote} when the names differ, else nil
+   (also nil when detached or untracked)."
+  [{:keys [branch merge-ref remote]}]
+  (when (and (not (str/blank? branch)) (not (str/blank? merge-ref)))
+    (let [prefix "refs/heads/"
+          upstream-branch (if (str/starts-with? merge-ref prefix)
+                            (subs merge-ref (count prefix))
+                            merge-ref)]
+      (when (not= branch upstream-branch)
+        {:branch branch :upstream-branch upstream-branch :remote remote}))))
+
 (defn plan-summary
   "Counts per action over a seq of plans. Pure."
   [plans]
