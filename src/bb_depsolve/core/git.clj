@@ -3,7 +3,9 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as proc]
             [bb-depsolve.cli.ui :as ui]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-depsolve.core.verify :as verify]
+            [hive-dsl.result :as r]))
 
 (defn git
   "Run a git command in project-dir. Returns process result map.
@@ -162,6 +164,50 @@
   [project-dir]
   {:branch (git project-dir "push")
    :tags   (git project-dir "push" "--tags")})
+
+(defn- git-out
+  "Trimmed stdout of a git command in project-dir, or nil on failure or silence."
+  [project-dir & args]
+  (let [r (apply git project-dir args)]
+    (when (zero? (:exit r))
+      (let [s (str/trim (:out r))] (when-not (str/blank? s) s)))))
+
+(defrecord GitPushProbe []
+  verify/IPushProbe
+  (expected-refs [_ project-dir]
+    (let [{:keys [merge-ref remote]} (git-tracking project-dir)
+          head (git-out project-dir "rev-parse" "HEAD")]
+      (when (and head remote (str/starts-with? (or merge-ref "") "refs/heads/"))
+        {:remote remote
+         :refs (into [{:ref merge-ref :sha head :kind :branch}]
+                     (for [tag (some-> (git-out project-dir "tag" "--points-at" "HEAD")
+                                       str/split-lines)
+                           :let [t (str/trim tag)
+                                 sha (git-out project-dir "rev-parse" (str "refs/tags/" t))]
+                           :when sha]
+                       {:ref (str "refs/tags/" t) :sha sha :kind :tag}))})))
+  (remote-refs [_ project-dir remote]
+    (let [r (try
+              (proc/sh {:dir (str project-dir)
+                        :extra-env {"GIT_TERMINAL_PROMPT" "0"}}
+                       "git" "ls-remote" "--heads" "--tags" remote)
+              (catch Exception e {:exit -1 :err (ex-message e)}))]
+      (if (zero? (:exit r))
+        (r/ok (verify/parse-ls-remote (:out r)))
+        (r/err :git/ls-remote-failed
+               {:message (or (->> (str/split-lines (or (:err r) ""))
+                                  (map str/trim)
+                                  (remove str/blank?)
+                                  first)
+                             (str "git ls-remote exited " (:exit r)))})))))
+
+(defn git-push-probe
+  "The git adapter of IPushProbe: expectations from the local repo (HEAD, its
+   tracked branch, the tags that point at HEAD) and observations from a read-only
+   `git ls-remote`. Tags elsewhere in history are not checked: a push of old
+   tags the remote refuses must not read as a failed release."
+  []
+  (->GitPushProbe))
 
 (defn- auto-commit-project!
   "Commit changed dep files in a project with descriptive message.

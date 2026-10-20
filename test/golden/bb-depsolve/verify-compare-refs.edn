@@ -1,0 +1,31 @@
+{:all-landed {:status :verified, :problems []},
+ :annotated-tag-peeled {:status :verified, :problems []},
+ :both-wrong
+ {:status :mismatch,
+  :problems
+  [{:ref "refs/heads/main",
+    :kind :branch,
+    :expected "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    :problem :missing}
+   {:ref "refs/tags/v1.0.0",
+    :kind :tag,
+    :expected "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    :observed "cccccccccccccccccccccccccccccccccccccccc",
+    :problem :differs}]},
+ :branch-elsewhere
+ {:status :mismatch,
+  :problems
+  [{:ref "refs/heads/main",
+    :kind :branch,
+    :expected "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    :observed "cccccccccccccccccccccccccccccccccccccccc",
+    :problem :differs}]},
+ :extra-remote-refs-ignored {:status :verified, :problems []},
+ :nothing-expected {:status :verified, :problems []},
+ :tag-missing
+ {:status :mismatch,
+  :problems
+  [{:ref "refs/tags/v1.0.0",
+    :kind :tag,
+    :expected "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    :problem :missing}]}}

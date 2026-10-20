@@ -108,6 +108,8 @@
                           :stable :boolean
                           :sync :boolean
                           :force :boolean
+                          :strict-push :boolean
+                          :no-verify-push :boolean
                           :skip-remote flag-or-string
                           :remotes :string
                           :no-wait :boolean
