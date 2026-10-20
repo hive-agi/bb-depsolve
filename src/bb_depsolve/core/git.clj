@@ -52,6 +52,21 @@
               (let [url (str/trim (:out r))]
                 (when-not (str/blank? url) url)))))))))
 
+(defn remote-host
+  "Lowercase hostname of a remote URL, or nil when it has none or is malformed.
+   SCP-style SSH, URI-form SSH, HTTPS, and git protocol URLs are accepted.
+   Pure: never consults git."
+  [url]
+  (let [url  (str/trim (or url ""))
+        host (try
+               (if (str/includes? url "://")
+                 (.getHost (java.net.URI. url))
+                 (when (and (str/includes? url "@") (str/includes? url ":"))
+                   (let [authority (first (str/split url #":" 2))]
+                     (second (str/split authority #"@" 2)))))
+               (catch Exception _ nil))]
+    (some-> host str/lower-case)))
+
 (defn remote-provider
   "Classify a remote URL without consulting git. OVERRIDES maps lowercase hostnames
    to provider keywords; explicit choices take precedence over built-in hosts.
@@ -59,15 +74,7 @@
    Unknown or malformed hosts return :other, never an inferred GitHub provider."
   ([url] (remote-provider url {}))
   ([url overrides]
-   (let [url (str/trim (or url ""))
-         host (try
-                (if (str/includes? url "://")
-                  (.getHost (java.net.URI. url))
-                  (when (and (str/includes? url "@") (str/includes? url ":"))
-                    (let [authority (first (str/split url #":" 2))]
-                      (second (str/split authority #"@" 2)))))
-                (catch Exception _ nil))
-         host (some-> host str/lower-case)]
+   (let [host (remote-host url)]
      (or (get overrides host)
          (cond
            (= host "github.com") :github

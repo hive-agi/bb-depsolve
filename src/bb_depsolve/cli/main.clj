@@ -83,6 +83,13 @@
     :doc "Rename branch (default master->main) across workspace"}
    {:cmds []          :fn (fn [_] (help/help-cmd dispatch-table))}])
 
+(defn flag-or-string
+  "Coerce for an option that is either a bare flag or carries a value:
+   `--skip-remote` alone is true, `--skip-remote gitea.*` is \"gitea.*\".
+   babashka.cli hands a bare flag over as the string \"true\"."
+  [s]
+  (if (= "true" s) true s))
+
 (defn -main [& args]
   (cli/dispatch dispatch-table args
                 {:coerce {:apply :boolean
@@ -101,7 +108,8 @@
                           :stable :boolean
                           :sync :boolean
                           :force :boolean
-                          :skip-remote :boolean
+                          :skip-remote flag-or-string
+                          :remotes :string
                           :no-wait :boolean
                           :no-fail :boolean
                           :depth :long

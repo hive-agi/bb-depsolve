@@ -9,7 +9,8 @@
             [bb-depsolve.core.lint :as lint]
             [bb-depsolve.core.sync :as sync]
             [bb-depsolve.core.upgrade :as upgrade]
-            [bb-depsolve.core.push :as push]))
+            [bb-depsolve.core.push :as push]
+            [bb-depsolve.core.remote :as remote]))
 
 (defn bump-wave-cmd
   "Bump all workspace projects that have commits ahead of their last tag."
@@ -76,19 +77,35 @@
               whoever dirtied it.
    --resolve  settle a conflicted merge with the sweep's policy
               (deps.edn/bb.edn -> ours, VERSION -> theirs, build.clj -> drop).
-              Any other conflicted path aborts the merge untouched."
+              Any other conflicted path aborts the merge untouched.
+
+   --remotes <globs>      push only projects whose remote matches one of the
+                          comma-separated globs.
+   --skip-remote <globs>  never push projects whose remote matches. A glob
+                          matches the first remote's URL, its host or its
+                          provider name (gitea, `gitea.*`, `*.corp.example`).
+                          An excluded project is neither fetched nor pushed;
+                          it is listed in the plan and counted in the summary.
+                          .bb-depsolve.edn :push-policy {:include [...]
+                          :exclude [...]} is the fallback for either flag."
   [{:keys [opts]}]
-  (let [{:keys [root skip-dirs sync resolve]
+  (let [{:keys [root skip-dirs sync resolve remotes skip-remote]
          :or {root "."}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
                    (into #{} (str/split skip-dirs #","))
                    discovery/default-skip-dirs)
-        projects (->> (fs/list-dir root-dir)
-                      (filter fs/directory?)
-                      (remove #(discovery/skip-path? root-dir skip-set %))
-                      (filter #(fs/exists? (fs/path % ".git")))
-                      (sort))
+        all-projects (->> (fs/list-dir root-dir)
+                          (filter fs/directory?)
+                          (remove #(discovery/skip-path? root-dir skip-set %))
+                          (filter #(fs/exists? (fs/path % ".git")))
+                          (sort))
+        {:keys [policy overrides]} (remote/workspace-push-policy
+                                    root-dir {:remotes remotes :skip-remote skip-remote})
+        decisions (remote/push-decisions all-projects git/git-first-remote-url
+                                         overrides policy)
+        projects (filter #(:push? (get decisions (str %))) all-projects)
+        excluded (remove #(:push? (get decisions (str %))) all-projects)
         settle! (fn [dir conflicts]
                   (let [{:keys [resolvable? actions unknown]} (push/conflict-plan conflicts)]
                     (if-not resolvable?
@@ -120,6 +137,16 @@
 
     (println (ui/c :bold (format "Pushing %d projects..." (count projects))))
     (println)
+
+    (doseq [project-dir excluded
+            :let [project (str (fs/file-name project-dir))
+                  {:keys [reason pattern]} (get decisions (str project-dir))]]
+      (bump! :excluded)
+      (println (ui/c :dim (format "  %-24s excluded — %s%s" project
+                                  (name reason)
+                                  (if pattern (str " (" pattern ")") "")))))
+    (when (seq excluded)
+      (println))
 
     (doseq [project-dir projects
             :let [project (str (fs/file-name project-dir))
@@ -170,19 +197,25 @@
               (report! project "merged + pushed" (push/push-outcome (git/git-push! dir))))))))
 
     (println)
-    (println (ui/c :bold (format "Pushed: %d  Skipped: %d  Rejected: %d  Conflicted: %d  Failed: %d"
+    (println (ui/c :bold (format "Pushed: %d  Skipped: %d  Excluded: %d  Rejected: %d  Conflicted: %d  Failed: %d"
                                  (get @tally :pushed 0) (get @tally :skipped 0)
+                                 (get @tally :excluded 0)
                                  (get @tally :rejected 0) (get @tally :conflicted 0)
-                                 (get @tally :failed 0))))))
+                                 (get @tally :failed 0))))
+    (when (seq excluded)
+      (println (ui/c :dim (str "  Excluded by push policy (not pushed; push manually later): "
+                               (str/join ", " (map #(str (fs/file-name %)) excluded))))))))
 
 (defn release-wave-cmd
   "Full workspace release: upgrade → lint → sync → bump → re-sync → push.
 
    The upgrade phase inherits --all / --only / --exclude / --allow-major: with
    none of them and no TTY it refuses to write, so a wave never applies an
-   unreviewed bump."
+   unreviewed bump. The push phase inherits --remotes / --skip-remote: bump
+   and tag still happen locally for every project, only the push is filtered."
   [{:keys [opts]}]
-  (let [{:keys [root org apply skip-dirs depth all only exclude allow-major]
+  (let [{:keys [root org apply skip-dirs depth all only exclude allow-major
+                remotes skip-remote]
          :or {root "." depth discovery/default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -247,7 +280,7 @@
       ;; Phase 6: Push
       (println (ui/c :bold "═══ Phase 6: Pushing all to remotes ═══"))
       (println)
-      (push-all-cmd {:opts base-opts})
+      (push-all-cmd {:opts (assoc base-opts :remotes remotes :skip-remote skip-remote)})
       (println)
 
       (println (ui/c :green (ui/c :bold "Release wave complete."))))))
