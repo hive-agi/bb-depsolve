@@ -1,0 +1,27 @@
+{:already-exists
+ {:status :exists,
+  :reason nil,
+  :url "https://github.com/hive-agi/hive-mcp/pull/42",
+  :calls [["--version"] ["auth" "status"] ["pr" "create"]]},
+ :create-failed
+ {:status :error,
+  :reason :pr/create-failed,
+  :url nil,
+  :calls [["--version"] ["auth" "status"] ["pr" "create"]]},
+ :created
+ {:status :created,
+  :reason nil,
+  :url "https://github.com/hive-agi/hive-mcp/pull/42",
+  :calls [["--version"] ["auth" "status"] ["pr" "create"]]},
+ :gh-missing
+ {:status :skipped,
+  :reason :gh-missing,
+  :url nil,
+  :calls [["--version"]]},
+ :non-github
+ {:status :skipped, :reason :non-github-provider, :url nil, :calls []},
+ :unauthenticated
+ {:status :skipped,
+  :reason :unauthenticated,
+  :url nil,
+  :calls [["--version"] ["auth" "status"]]}}
