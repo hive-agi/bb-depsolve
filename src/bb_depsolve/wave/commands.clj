@@ -10,7 +10,8 @@
             [bb-depsolve.core.sync :as sync]
             [bb-depsolve.core.upgrade :as upgrade]
             [bb-depsolve.core.push :as push]
-            [bb-depsolve.core.remote :as remote]))
+            [bb-depsolve.core.remote :as remote]
+            [bb-depsolve.core.verify :as verify]))
 
 (defn bump-wave-cmd
   "Bump all workspace projects that have commits ahead of their last tag."
@@ -87,10 +88,24 @@
                           An excluded project is neither fetched nor pushed;
                           it is listed in the plan and counted in the summary.
                           .bb-depsolve.edn :push-policy {:include [...]
-                          :exclude [...]} is the fallback for either flag."
-  [{:keys [opts]}]
-  (let [{:keys [root skip-dirs sync resolve remotes skip-remote]
+                          :exclude [...]} is the fallback for either flag.
+
+   Verification: a push that exits 0 is not taken on faith. After each landed
+   push the remote is asked, read-only, what it serves (`git ls-remote`) and
+   the branch sha plus the tags pointing at HEAD are compared with the local
+   ones; a ref the remote lacks or holds at another sha is reported with what
+   to run. A remote that cannot be asked is reported as unverified.
+   --no-verify-push  skip the check.
+   --strict-push     a mismatch, or a push that cannot be verified, stops the
+                     cascade: the remaining projects are left unpushed and the
+                     command exits 1. Without it both are reported and counted
+                     (Unverified, Mismatched) and the push goes on.
+   `:probe` (default bb-depsolve.core.git/git-push-probe) is the IPushProbe
+   port and `:exit!` (default System/exit) the process-exit port."
+  [{:keys [opts probe exit!] :or {exit! #(System/exit %)}}]
+  (let [{:keys [root skip-dirs sync resolve remotes skip-remote strict-push no-verify-push]
          :or {root "."}} opts
+        probe (or probe (git/git-push-probe))
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
                    (into #{} (str/split skip-dirs #","))
@@ -121,14 +136,31 @@
                           (let [c (git/git dir "commit" "--no-edit")]
                             {:ok? (zero? (:exit c))})))))
         tally (atom {})
+        aborted (atom false)
         bump! (fn [k] (swap! tally update k (fnil inc 0)))
-        report! (fn [project verb {:keys [status tags detail tags-detail]}]
+        verify! (fn [project dir]
+                  (let [v (verify/verify-push! probe dir)
+                        {:keys [level abort?]} (verify/disposition v strict-push)
+                        lines (verify/describe v)]
+                    (case (:status v)
+                      :mismatch (bump! :mismatched)
+                      :unavailable (bump! :unverified)
+                      nil)
+                    (doseq [line lines]
+                      (println (ui/c (case level :ok :dim :warn :yellow :fail :red)
+                                     (str "    " line))))
+                    (when abort?
+                      (reset! aborted true)
+                      (println (ui/c :red (format "  %-24s --strict-push: stopping the cascade" project))))))
+        report! (fn [project dir verb {:keys [status tags detail tags-detail]}]
                   (case status
                     :pushed
                     (do (bump! :pushed)
                         (println (ui/c :green (str "  " project " — " verb)))
                         (when (= :failed tags)
-                          (println (ui/c :dim (str "    tags not pushed — " tags-detail)))))
+                          (println (ui/c :dim (str "    tags not pushed — " tags-detail))))
+                        (when-not no-verify-push
+                          (verify! project dir)))
                     :rejected
                     (do (bump! :rejected)
                         (println (ui/c :yellow (format "  %-24s rejected — upstream moved, pass --sync (%s)" project detail))))
@@ -149,6 +181,7 @@
       (println))
 
     (doseq [project-dir projects
+            :while (not @aborted)
             :let [project (str (fs/file-name project-dir))
                   dir (str project-dir)
                   _ (git/git dir "fetch" "--quiet")
@@ -177,7 +210,7 @@
                                           (str " (" (str/join ", " f) ")")
                                           "")))))
         :push
-        (report! project "pushed" (push/push-outcome (git/git-push! dir)))
+        (report! project dir "pushed" (push/push-outcome (git/git-push! dir)))
 
         :merge-then-push
         (if-not sync
@@ -194,17 +227,21 @@
               (do (bump! :conflicted)
                   (println (ui/c :yellow (format "  %-24s merge conflict — %s" project
                                                  (str/join ", " (:unknown settled))))))
-              (report! project "merged + pushed" (push/push-outcome (git/git-push! dir))))))))
+              (report! project dir "merged + pushed" (push/push-outcome (git/git-push! dir))))))))
 
     (println)
-    (println (ui/c :bold (format "Pushed: %d  Skipped: %d  Excluded: %d  Rejected: %d  Conflicted: %d  Failed: %d"
+    (println (ui/c :bold (format "Pushed: %d  Skipped: %d  Excluded: %d  Rejected: %d  Conflicted: %d  Failed: %d  Unverified: %d  Mismatched: %d"
                                  (get @tally :pushed 0) (get @tally :skipped 0)
                                  (get @tally :excluded 0)
                                  (get @tally :rejected 0) (get @tally :conflicted 0)
-                                 (get @tally :failed 0))))
+                                 (get @tally :failed 0)
+                                 (get @tally :unverified 0) (get @tally :mismatched 0))))
     (when (seq excluded)
       (println (ui/c :dim (str "  Excluded by push policy (not pushed; push manually later): "
-                               (str/join ", " (map #(str (fs/file-name %)) excluded))))))))
+                               (str/join ", " (map #(str (fs/file-name %)) excluded))))))
+    (when @aborted
+      (println (ui/c :red "  Cascade stopped by --strict-push; projects after the failing one were not pushed."))
+      (exit! 1))))
 
 (defn release-wave-cmd
   "Full workspace release: upgrade → lint → sync → bump → re-sync → push.
@@ -212,10 +249,12 @@
    The upgrade phase inherits --all / --only / --exclude / --allow-major: with
    none of them and no TTY it refuses to write, so a wave never applies an
    unreviewed bump. The push phase inherits --remotes / --skip-remote: bump
-   and tag still happen locally for every project, only the push is filtered."
+   and tag still happen locally for every project, only the push is filtered.
+   It also inherits --strict-push / --no-verify-push, the post-push ls-remote
+   verification."
   [{:keys [opts]}]
   (let [{:keys [root org apply skip-dirs depth all only exclude allow-major
-                remotes skip-remote]
+                remotes skip-remote strict-push no-verify-push]
          :or {root "." depth discovery/default-depth}} opts
         root-dir (str (fs/canonicalize root))
         skip-set (if skip-dirs
@@ -280,7 +319,8 @@
       ;; Phase 6: Push
       (println (ui/c :bold "═══ Phase 6: Pushing all to remotes ═══"))
       (println)
-      (push-all-cmd {:opts (assoc base-opts :remotes remotes :skip-remote skip-remote)})
+      (push-all-cmd {:opts (assoc base-opts :remotes remotes :skip-remote skip-remote
+                                  :strict-push strict-push :no-verify-push no-verify-push)})
       (println)
 
       (println (ui/c :green (ui/c :bold "Release wave complete."))))))
