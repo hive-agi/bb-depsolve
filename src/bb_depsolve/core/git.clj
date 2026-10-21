@@ -209,16 +209,41 @@
   []
   (->GitPushProbe))
 
+(defn project-dir
+  "The directory of PROJECT under ROOT-DIR. Discovery names a dep file that
+   sits in the root itself after the root (its :project is the root's file
+   name), which is every file at --depth 0, and <root>/<root-name> does not
+   exist: that project's directory is the root."
+  [root-dir project]
+  (let [child (fs/path root-dir project)
+        root  (fs/canonicalize root-dir)]
+    (if (and (not (fs/directory? child))
+             (= (str project) (str (fs/file-name root))))
+      (str root)
+      (str child))))
+
+(defn- report-failure!
+  "Print a red line for a git step that exited non-zero in PROJECT."
+  [project step result]
+  (let [why (->> (str/split-lines (str (:err result) "\n" (:out result)))
+                 (map str/trim)
+                 (remove str/blank?)
+                 first)]
+    (println (ui/c :red (str "  Commit failed: " project " (git " step " exited " (:exit result)
+                             (when why (str ": " why)) ")")))))
+
 (defn- auto-commit-project!
   "Commit changed dep files in a project with descriptive message.
-   Returns true if a commit was made."
-  [project-dir message]
+   Returns true if a commit was made; a failed git step is printed."
+  [project project-dir message]
   (let [changed (git-changed-files project-dir)]
     (when (seq changed)
       (doseq [f changed]
         (git project-dir "add" f))
       (let [result (git project-dir "commit" "-m" message)]
-        (zero? (:exit result))))))
+        (if (zero? (:exit result))
+          true
+          (do (report-failure! project "commit" result) false))))))
 
 (defn auto-commit-workspace!
   "Commit all changed dep files across workspace projects.
@@ -227,9 +252,8 @@
   (let [projects (->> dep-files
                       (map :project)
                       (distinct))]
-    (doseq [project projects
-            :let [project-dir (str (fs/path root-dir project))]]
-      (when (auto-commit-project! project-dir message)
+    (doseq [project projects]
+      (when (auto-commit-project! project (project-dir root-dir project) message)
         (println (ui/c :green (str "  Committed: " project)))))))
 
 (defn commit-paths!
@@ -237,16 +261,26 @@
    one commit per project with MESSAGE, staging nothing else: a neighbour's
    work in progress in some other .edn of the same project stays where it
    is. Returns {project [relative-path ...]} for the projects that got a
-   commit."
+   commit. A project with nothing staged is skipped quietly; a git step that
+   fails is printed in red, never dropped."
   [root-dir paths-by-project message]
   (into {}
         (keep (fn [[project paths]]
-                (let [dir (str (fs/path root-dir project))
+                (let [dir (project-dir root-dir project)
                       rel (mapv #(str (fs/relativize dir %)) paths)]
                   (when (seq rel)
-                    (apply git dir "add" "--" rel)
-                    (let [c (apply git dir "commit" "-q" "-m" message "--" rel)]
-                      (when (zero? (:exit c))
-                        (println (ui/c :green (str "  Committed: " project " (" (str/join ", " rel) ")")))
-                        [project rel]))))))
+                    (let [a (apply git dir "add" "--" rel)]
+                      (cond
+                        (not (zero? (:exit a)))
+                        (do (report-failure! project "add" a) nil)
+
+                        (zero? (:exit (apply git dir "diff" "--cached" "--quiet" "--" rel)))
+                        nil
+
+                        :else
+                        (let [c (apply git dir "commit" "-q" "-m" message "--" rel)]
+                          (if (zero? (:exit c))
+                            (do (println (ui/c :green (str "  Committed: " project " (" (str/join ", " rel) ")")))
+                                [project rel])
+                            (do (report-failure! project "commit" c) nil)))))))))
         paths-by-project))

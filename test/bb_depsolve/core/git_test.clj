@@ -119,6 +119,35 @@
     (testing "a project with nothing to commit gets no entry"
       (is (= {} (git/commit-paths! base {project [(str (fs/path dir "deps.edn"))]} "again"))))))
 
+(deftest commit-paths!-commits-in-the-root-repo-at-depth-0-test
+  ;; --depth 0 / --root AT a repo: discovery names the root's own dep files
+  ;; after the root (:project = its file name), and <root>/<root-name> does
+  ;; not exist. The commit belongs in the root repo itself.
+  (let [{:keys [dir]} (scratch)
+        project (str (fs/file-name dir))]
+    (spit (str (fs/path dir "deps.edn")) "{:deps {a/b {:mvn/version \"3\"}}}\n")
+    (let [done (git/commit-paths! dir {project [(str (fs/path dir "deps.edn"))]} "chore(deps): sync t internal coords")]
+      (is (= {project ["deps.edn"]} done))
+      (is (= #{"deps.edn"} (head-files dir)))
+      (is (= "" (str/trim (:out (git! dir "status" "--porcelain"))))))
+    (testing "auto-commit-workspace! resolves the root project the same way"
+      (spit (str (fs/path dir "deps.edn")) "{:deps {a/b {:mvn/version \"4\"}}}\n")
+      (let [out (with-out-str (git/auto-commit-workspace! dir [{:project project}] "chore: sync deps"))]
+        (is (str/includes? out (str "Committed: " project)))
+        (is (= "chore: sync deps" (str/trim (:out (git! dir "log" "-1" "--format=%s")))))))))
+
+(deftest commit-paths!-prints-a-failed-commit-test
+  (let [base  (str (fs/create-temp-dir {:prefix "bb-depsolve-norepo"}))
+        plain (str (fs/path base "plain"))]
+    (fs/create-dirs plain)
+    (spit (str (fs/path plain "deps.edn")) "{:deps {}}\n")
+    (let [done (atom nil)
+          out  (with-out-str
+                 (reset! done (git/commit-paths! base {"plain" [(str (fs/path plain "deps.edn"))]} "msg")))]
+      (is (= {} @done) "nothing was committed")
+      (is (str/includes? out "Commit failed: plain")
+          "a git failure is printed, not dropped"))))
+
 (deftest git-upstream-test
   (let [{:keys [dir]} (scratch)]
     (is (= "origin/main" (git/git-upstream dir)))
