@@ -1,0 +1,8 @@
+{:codeberg "https://codeberg.org/myorg/tool",
+ :gitea-bare-group "git@gitea.hive-mcp.com:buddhilw/srelaying.git",
+ :gitea-no-map nil,
+ :github "https://github.com/hive-agi/hive-mcp",
+ :github-no-map "https://github.com/hive-agi/hive-mcp",
+ :gitlab "https://gitlab.com/myorg/myrepo",
+ :second-gitea "git@git.example.org:lab/probe.git",
+ :unmapped-group nil}

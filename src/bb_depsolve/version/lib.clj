@@ -8,25 +8,56 @@
   (when-let [[_ org repo] (re-matches #"io\.github\.(.+)/(.+)" (str lib-sym))]
     {:org org :repo repo}))
 
+(defn- forge-map-entry
+  "The [prefix entry] of FORGE-MAP whose coordinate prefix S starts with, the
+   longest prefix winning, or nil. Pure."
+  [forge-map s]
+  (->> forge-map
+       (filter (fn [[prefix _]]
+                 (and (string? prefix)
+                      (not (str/blank? prefix))
+                      (str/starts-with? s prefix))))
+       (sort-by (comp - count key))
+       first))
+
 (defn parse-forge-lib
   "Parse a forge-prefixed lib symbol into {:forge :org :repo}.
-   Supports io.github.*, io.gitlab.*, io.codeberg.*. Pure, total.
-   Returns nil for non-forge libs."
-  [lib-sym]
-  (when-let [[_ forge org repo]
-             (re-matches #"io\.(github|gitlab|codeberg)\.([^/]+)/(.+)"
-                         (str lib-sym))]
-    {:forge (keyword forge) :org org :repo repo}))
+   Supports io.github.*, io.gitlab.*, io.codeberg.*, and those always win.
+
+   With FORGE-MAP ({\"coord-prefix\" {:forge :gitea :host h :org o}}), a
+   bare-group coordinate such as general/srelaying resolves through the
+   longest matching prefix to {:forge :host :org :repo}. An entry missing
+   :forge, :host or :org, or a remainder that is blank or still holds a /,
+   does not resolve. Pure, total. Returns nil for libs neither names."
+  ([lib-sym] (parse-forge-lib lib-sym nil))
+  ([lib-sym forge-map]
+   (let [s (str lib-sym)]
+     (or (when-let [[_ forge org repo]
+                    (re-matches #"io\.(github|gitlab|codeberg)\.([^/]+)/(.+)" s)]
+           {:forge (keyword forge) :org org :repo repo})
+         (when-let [[prefix {:keys [forge host org]}] (forge-map-entry forge-map s)]
+           (let [repo (subs s (count prefix))]
+             (when (and forge
+                        (not (str/blank? (str host)))
+                        (not (str/blank? (str org)))
+                        (not (str/blank? repo))
+                        (not (str/includes? repo "/")))
+               {:forge forge :host host :org org :repo repo})))))))
 
 (defn forge-clone-url
   "Clone URL for a forge / org / repo. Returns nil for unknown forge.
+   :gitea is self-hosted, so it needs HOST and answers its SSH URL
+   (git@<host>:<org>/<repo>.git); without a host it is nil.
    Pure: string formatting only."
-  [forge org repo]
-  (case forge
-    :github   (format "https://github.com/%s/%s" org repo)
-    :gitlab   (format "https://gitlab.com/%s/%s" org repo)
-    :codeberg (format "https://codeberg.org/%s/%s" org repo)
-    nil))
+  ([forge org repo] (forge-clone-url forge org repo nil))
+  ([forge org repo host]
+   (case forge
+     :github   (format "https://github.com/%s/%s" org repo)
+     :gitlab   (format "https://gitlab.com/%s/%s" org repo)
+     :codeberg (format "https://codeberg.org/%s/%s" org repo)
+     :gitea    (when-not (str/blank? (str host))
+                 (format "git@%s:%s/%s.git" host org repo))
+     nil)))
 
 (defn forge-raw-url
   "Raw-content URL for FILE at TAG on FORGE. Returns nil for unknown forge.
