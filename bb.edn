@@ -19,6 +19,8 @@
                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
         :task (exec 'cognitect.test-runner.api/test)}
   test-model {:task (shell "clojure" "-M:test-model")}
+  check-git-pins {:doc "Verify every :git/tag in deps.edn and bb.edn names the commit its :git/sha pins (git ls-remote). Exit 1 on a mismatch."
+                  :task (apply (requiring-resolve 'bb-depsolve.core.git-pins/-main) *command-line-args*)}
   split {:doc "Apply a namespace split spec from dev/refactor (REPL-driven refactoring)."
          :extra-paths ["dev"]
          :requires ([refactor.split :as split])
