@@ -28,7 +28,7 @@
   :test-model {:extra-paths ["test-model"]
  :extra-deps {org.clojure/clojure {:mvn/version "1.12.6"}
               pfeodrippe/recife {:mvn/version "0.22.0"}
-              io.github.hive-agi/hive-recife {:git/tag "v0.1.21" :git/sha "0bd6c8e"}
+              io.github.hive-agi/hive-recife {:mvn/version "0.1.20"}
               io.github.hive-agi/hive-spi {:mvn/version "1.4.9"}}
  :main-opts ["-m" "bb-depsolve.sync-model"]}
   :dev {:extra-paths ["dev" "test"]
@@ -36,6 +36,6 @@
   :cascade-model {:extra-paths ["test-model"]
                    :extra-deps {org.clojure/clojure {:mvn/version "1.12.6"}
                                 pfeodrippe/recife {:mvn/version "0.22.0"}
-                                io.github.hive-agi/hive-recife {:git/tag "v0.1.21" :git/sha "0bd6c8e"}
+                                io.github.hive-agi/hive-recife {:mvn/version "0.1.20"}
                                 io.github.hive-agi/hive-spi {:mvn/version "1.4.9"}}
                    :main-opts ["-m" "bb-depsolve.cascade-model"]}}}
