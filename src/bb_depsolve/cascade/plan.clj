@@ -53,19 +53,25 @@
         (:pins g)))
 
 (defn effective-version
-  "Highest version PROJECT is known to be at: the version it declares, or the
-   highest version any consumer pins, whichever is greater.
+  "Highest version PROJECT is known to be at: the version it declares, the
+   highest version any consumer pins, or any version in EVIDENCE (its newest
+   tag, its newest published artifact), whichever is greater.
 
    Returns {:version v :declared d :observed o}, where :observed is the highest
-   pinned version when it exceeds the declared one and nil otherwise. A
+   known version when it exceeds the declared one and nil otherwise. A
    non-nil :observed means the project's VERSION file lags its own releases."
-  [g project declared]
-  (let [pinned (pinned-versions g project)
-        candidates (cond-> pinned declared (conj declared))
-        highest (last (sort v/version-compare candidates))]
-    {:version (or highest declared)
-     :declared declared
-     :observed (when (and declared highest (not= highest declared)) highest)}))
+  ([g project declared] (effective-version g project declared nil))
+  ([g project declared evidence]
+   (let [pinned (pinned-versions g project)
+         candidates (cond-> (into pinned
+                                  (comp (remove nil?) (map v/tag->mvn-version)
+                                        (filter v/parse-semver))
+                                  evidence)
+                      declared (conj declared))
+         highest (last (sort v/version-compare candidates))]
+     {:version (or highest declared)
+      :declared declared
+      :observed (when (and declared highest (not= highest declared)) highest)})))
 
 (defn- pin-updates
   "Pin updates PROJECT must take because its in-plan dependencies are released.
@@ -138,7 +144,9 @@
              :upstream-bump upstream
              :wave-index wave-index}
         bump-kind (bump/select-bump-kind rules ctx)
-        {:keys [version declared observed]} (effective-version g project (:version node))]
+        {:keys [version declared observed]} (effective-version g project (:version node)
+                                                                        [(:tag-version node)
+                                                                         (:published-version node)])]
     (cond-> {:project project
              :lib (:lib node)
              :dir (:dir node)
