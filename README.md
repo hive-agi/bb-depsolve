@@ -21,6 +21,21 @@ Sync internal git deps, upgrade mvn versions, and visualize dependency drift —
 bbin install io.github.hive-agi/bb-depsolve
 ```
 
+bbin writes a launcher script that pins the coordinate it resolved at install
+time, so a newer release is not picked up until you reinstall. To move to a
+release (or off a broken one, e.g. v0.6.3, whose hive-dsl pin named the wrong
+commit and failed at load with `hive-dsl.result.taxonomy` missing):
+
+```bash
+bbin ls                                    # which coordinate is installed
+bbin uninstall bb-depsolve
+bbin install io.github.hive-agi/bb-depsolve --git/tag vX.Y.Z
+head -20 "$(command -v bb-depsolve)"       # the launcher now names vX.Y.Z
+```
+
+If the old launcher still runs, another `bb-depsolve` earlier on `PATH` is
+shadowing it: `type -a bb-depsolve` lists them.
+
 ### As a workspace dependency
 
 Add to your `bb.edn`:

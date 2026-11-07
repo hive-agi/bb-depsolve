@@ -75,6 +75,38 @@
   [g project]
   (get (reverse-edges g) project #{}))
 
+(defn- reaches?
+  "True when FROM transitively depends on TO through G's edges."
+  [g from to]
+  (loop [frontier #{from} seen #{}]
+    (cond
+      (contains? frontier to) true
+      (empty? frontier) false
+      :else (let [seen' (into seen frontier)]
+              (recur (into #{} (comp (mapcat #(get (:edges g) % #{})) (remove seen'))
+                           frontier)
+                     seen')))))
+
+(defn admit-edges
+  "G with an ordering edge added for every indexed pin satisfying PIN? whose
+   edge would not close a cycle. Pins are taken in [consumer dependency]
+   order, so the result is deterministic.
+
+   For pins recorded without ordering power (an alias-scoped pin, say): the
+   consumer still re-pins the dependency after it releases, so it belongs in
+   a later wave, but a test alias must never turn an acyclic runtime graph
+   into one the planner refuses."
+  [g pin?]
+  (reduce (fn [g' [[project dep] pins]]
+            (if (and (not= project dep)
+                     (some pin? pins)
+                     (not (contains? (get (:edges g') project #{}) dep))
+                     (not (reaches? g' dep project)))
+              (update-in g' [:edges project] (fnil conj #{}) dep)
+              g'))
+          g
+          (sort-by key (:pins g))))
+
 (defn downstream-closure
   "All projects transitively depending on any of SEEDS, including SEEDS.
    Seeds absent from G are retained. Terminates on cycles."

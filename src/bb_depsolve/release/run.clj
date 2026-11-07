@@ -16,7 +16,11 @@
             [bb-depsolve.release.resume :as resume]
             [bb-depsolve.cli.ui :as ui]
             [clojure.pprint :as pp]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-depsolve.release.port :as port]
+            [bb-depsolve.graph.dag :as graph]
+            [hive-weave.parallel :as par]
+            [hive-dsl.result :as r]))
 
 (defn- execute-cascade!
   "Run PLAN for real, resuming from ROOT-DIR's checkpoint when one is present.
@@ -54,42 +58,90 @@
                                           (count (:released run))))))
             (System/exit 1)))))))
 
+(def ^:private published-concurrency
+  "Simultaneous registry lookups while planning: each is a git ls-remote plus
+   a few registry GETs."
+  8)
+
+(defn- published-version
+  "Newest version of LIB REGISTRY can observe, or nil when it answers none."
+  [registry lib]
+  (let [result (port/latest-version registry lib)]
+    (when (r/ok? result) (:ok result))))
+
+(defn with-published
+  "G with :published-version set on every node in PROJECTS that REGISTRY
+   observes a version for, looked up with bounded fan-out."
+  [g registry projects]
+  (let [projects (vec (sort (filter #(get-in g [:nodes %]) projects)))
+        versions (par/bounded-pmap {:concurrency published-concurrency
+                                    :timeout-ms 60000
+                                    :fallback nil}
+                                   #(published-version registry (get-in g [:nodes % :lib]))
+                                   projects)]
+    (reduce (fn [g' [p version]]
+              (cond-> g' version (assoc-in [:nodes p :published-version] version)))
+            g
+            (map vector projects versions))))
+
+(defn cascade-plan
+  "The cascade plan for OPTS ({:root :org :skip-dirs :depth :from ...}),
+   observing published versions through REGISTRY (an IArtifactRegistry).
+   Returns the plan value, or nil when there is nothing to cascade.
+
+   Each project is planned from the highest of its VERSION, its newest tag,
+   the newest version REGISTRY observes and its consumers' pins, so a stale
+   VERSION never re-plans a release that already exists. Seeds are projects
+   with commits past their release base. Alias-scoped pins order releases
+   too, wherever they do not close a cycle: the consumer re-pins after its
+   dependency publishes, so it needs a wave."
+  [opts registry]
+  (let [{:keys [root org skip-dirs depth from no-wait await-timeout]
+         :or {root "."}} opts
+        skips (ropts/skip-set skip-dirs)
+        root-dir (str (fs/canonicalize root))
+        g (-> (col/collect-graph {:root root-dir :skip-dirs skips :depth depth :org org})
+              (graph/admit-edges (constantly true)))
+        seeds (or (ropts/parse-seeds from)
+                  (col/detect-seeds (vals (:nodes g))))]
+    (when (seq seeds)
+      (cas/plan-cascade (with-published g registry (graph/downstream-closure g seeds))
+                        seeds
+                        {:requested-bump (ropts/requested-bump opts)
+                         :await (cond-> {}
+                                  no-wait (assoc :mode :skip)
+                                  await-timeout (assoc :timeout-ms await-timeout))}))))
+
 (defn cascade-cmd
   "Plan a transitive release cascade across the workspace.
 
    Seeds come from --from <csv>; without it, every project holding unpublished
-   commits seeds the cascade. Planning only unless --apply is passed."
-  [{:keys [opts]}]
-  (let [{:keys [root org skip-dirs depth from no-wait await-timeout apply force]
+   commits seeds the cascade. Planning only unless --apply is passed.
+   `:registry` (default bb-depsolve.registry.live/live-registry) is the
+   IArtifactRegistry the plan reads published versions from."
+  [{:keys [opts registry]}]
+  (let [{:keys [root org no-wait await-timeout apply force]
          out-format :format
          :or {root "."}} opts
         out-format (or out-format "text")
-        skips (ropts/skip-set skip-dirs)
-        root-dir (str (fs/canonicalize root))]
+        root-dir (str (fs/canonicalize root))
+        registry (or registry (registry/live-registry))]
     (ropts/require-org! org "cascade")
-    (let [g (col/collect-graph {:root root-dir :skip-dirs skips :depth depth :org org})
-          seeds (or (ropts/parse-seeds from)
-                    (col/detect-seeds (col/collect-nodes root-dir skips org)))]
-      (if (empty? seeds)
-        (println (ui/c :green "Nothing to cascade: every project is published up to date."))
-        (let [plan (cas/plan-cascade g seeds
-                                     {:requested-bump (ropts/requested-bump opts)
-                                      :await (cond-> {}
-                                               no-wait (assoc :mode :skip)
-                                               await-timeout (assoc :timeout-ms await-timeout))})]
-          (cond
-            (= out-format "edn") (pp/pprint plan)
+    (if-let [plan (cascade-plan opts registry)]
+      (cond
+        (= out-format "edn") (pp/pprint plan)
 
-            apply
-            (do (render/print-plan plan)
-                (println)
-                (println (ui/c :bold "Executing — this bumps, tags and pushes."))
-                (println)
-                (execute-cascade! root-dir plan {:force? force
-                                                 :no-wait no-wait
-                                                 :await-timeout await-timeout}))
+        apply
+        (do (render/print-plan plan)
+            (println)
+            (println (ui/c :bold "Executing — this bumps, tags and pushes."))
+            (println)
+            (execute-cascade! root-dir plan {:force? force
+                                             :no-wait no-wait
+                                             :await-timeout await-timeout}))
 
-            :else (render/print-plan plan)))))))
+        :else (render/print-plan plan))
+      (println (ui/c :green "Nothing to cascade: every project is published up to date.")))))
 
 (defn reconcile-cmd
   "Rewrite VERSION files that lag the versions already evidenced by their own

@@ -73,6 +73,12 @@ jobs:
       - name: Resolve declared classpath
         run: clojure -P
 
+      # tools.deps fetches a git dep by :git/sha, so a sha that is not the
+      # tag's commit ships silently (v0.6.3 pinned hive-dsl v0.5.36 at the
+      # wrong commit). Every :git/tag must name the commit its :git/sha pins.
+      - name: Check git tag/sha pins
+        run: clojure -M -m bb-depsolve.core.git-pins deps.edn bb.edn
+
       - name: Test
         run: |
           set -euo pipefail
