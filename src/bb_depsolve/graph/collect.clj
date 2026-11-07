@@ -11,19 +11,27 @@
             [bb-depsolve.schema.api :as sch]
             [bb-depsolve.version.api :as v]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-depsolve.core.skip :as skip]
+            [bb-depsolve.core.resolve :as resolve]
+            [hive-dsl.result :as r]))
 
 (defn publishable-dirs
   "Git-initialized subdirectories of ROOT-DIR carrying a version.edn.
-   Returns a sorted vector of absolute paths."
+   Returns a sorted vector of absolute paths.
+
+   The workspace skip file is unioned onto SKIP-DIRS, and a linked worktree of
+   a sibling checkout is left out: it is a branch of that library, not a
+   library of its own (bb-depsolve.core.discovery/excluded-dir?)."
   [root-dir skip-dirs]
-  (->> (fs/list-dir root-dir)
-       (filter fs/directory?)
-       (remove #(discovery/skip-path? root-dir skip-dirs %))
-       (filter #(fs/exists? (fs/path % "version.edn")))
-       (filter #(fs/exists? (fs/path % ".git")))
-       (sort)
-       (vec)))
+  (let [skip-dirs (into (set skip-dirs) (skip/dirs root-dir))]
+    (->> (fs/list-dir root-dir)
+         (filter fs/directory?)
+         (remove #(discovery/excluded-dir? root-dir skip-dirs %))
+         (filter #(fs/exists? (fs/path % "version.edn")))
+         (filter #(fs/exists? (fs/path % ".git")))
+         (sort)
+         (vec))))
 
 (defn read-version-config
   "Parse PROJECT-DIR's version.edn. Returns nil when absent or unreadable."
@@ -65,32 +73,52 @@
     (when-let [n (git-count project-dir "HEAD")]
       (format "0.%s.%s" (:minor cfg 0) n))))
 
+(defn latest-tag-version
+  "Maven-form version of PROJECT-DIR's newest local semver tag, or nil."
+  [project-dir]
+  (let [result (resolve/resolve-local-tags project-dir)]
+    (when (r/ok? result)
+      (some-> (v/latest-tag (:ok result)) :tag v/tag->mvn-version))))
+
+(defn release-base
+  "The version a :pinned project last released: the higher of its declared
+   VERSION and its newest tag. VERSION is a floor, not the truth: tag-released
+   repos (CI tags without committing VERSION back) run ahead of it. Nil-safe."
+  [version tag-version]
+  (last (sort v/version-compare (remove nil? [version tag-version]))))
+
 (defn commits-unreleased
   "Commits PROJECT-DIR has not published yet.
-   :pinned counts commits past the VERSION tag; :rolling counts commits not yet
-   pushed to the tracking branch. Returns 0 when it cannot be determined."
-  [project-dir mode version]
-  (or (if (= :pinned mode)
-        (when version (git/git-commits-ahead project-dir (str "v" version)))
-        (git-count project-dir "@{u}..HEAD"))
-      0))
+   :pinned counts commits past the tag of its release base (the higher of
+   VERSION and the newest tag); :rolling counts commits not yet pushed to the
+   tracking branch. Returns 0 when it cannot be determined."
+  ([project-dir mode version] (commits-unreleased project-dir mode version nil))
+  ([project-dir mode version tag-version]
+   (or (if (= :pinned mode)
+         (when-let [base (release-base version tag-version)]
+           (git/git-commits-ahead project-dir (str "v" base)))
+         (git-count project-dir "@{u}..HEAD"))
+       0)))
 
 (defn collect-nodes
   "Graph nodes for every publishable project under ROOT-DIR.
    ORG, when given, keeps only libs belonging to that GitHub org.
-   Projects whose version.edn declares no :lib are skipped."
+   Projects whose version.edn declares no :lib are skipped. A :pinned node
+   carries :tag-version, its newest local semver tag, when it has one."
   [root-dir skip-dirs org]
   (->> (publishable-dirs root-dir skip-dirs)
        (keep (fn [dir]
                (let [cfg (read-version-config dir)
                      lib (:lib cfg)]
                  (when (and lib (or (nil? org) (v/lib-matches-org? org lib)))
-                   (let [mode (release-mode dir)]
-                     {:project (str (fs/file-name dir))
-                      :lib lib
-                      :dir (str dir)
-                      :release-mode mode
-                      :version (project-version dir cfg mode)})))))
+                   (let [mode (release-mode dir)
+                         tag-version (when (= :pinned mode) (latest-tag-version dir))]
+                     (cond-> {:project (str (fs/file-name dir))
+                              :lib lib
+                              :dir (str dir)
+                              :release-mode mode
+                              :version (project-version dir cfg mode)}
+                       tag-version (assoc :tag-version tag-version)))))))
        (vec)))
 
 (defn collect-pins
@@ -160,11 +188,12 @@
                                     {:edge? #(contains? scopes (:scope %))}))))
 
 (defn detect-seeds
-  "Projects among NODES carrying commits they have not published.
+  "Projects among NODES carrying commits they have not published, counted
+   from each project's release base rather than its possibly stale VERSION.
    Returns a sorted set of project names."
   [nodes]
   (into (sorted-set)
-        (keep (fn [{:keys [project dir release-mode version]}]
-                (when (pos? (commits-unreleased dir release-mode version))
+        (keep (fn [{:keys [project dir release-mode version tag-version]}]
+                (when (pos? (commits-unreleased dir release-mode version tag-version))
                   project)))
         nodes))

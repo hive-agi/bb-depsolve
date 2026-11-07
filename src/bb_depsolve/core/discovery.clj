@@ -16,6 +16,46 @@
                (str/starts-with? rel (str % "/")))
           skip-dirs)))
 
+(defn main-checkout
+  "The canonical checkout DIR is a linked git worktree of, or nil when DIR is
+   not one (its .git is a directory, or absent, or unreadable).
+
+   A linked worktree's .git is a FILE `gitdir: <repo>/.git/worktrees/<name>`,
+   and that admin dir's `commondir` names the shared .git. Plain file reads:
+   no git process is spawned."
+  [dir]
+  (let [dot-git (fs/path dir ".git")]
+    (when (fs/regular-file? dot-git)
+      (try
+        (when-let [[_ gitdir] (re-find #"(?m)^gitdir:\s*(.+?)\s*$" (slurp (str dot-git)))]
+          (let [gitdir (fs/path (fs/absolutize (fs/path dir)) gitdir)
+                commondir-file (fs/path gitdir "commondir")
+                common (when (fs/exists? commondir-file)
+                         (fs/canonicalize (fs/path gitdir (str/trim (slurp (str commondir-file))))))]
+            (when (and common (= ".git" (str (fs/file-name common))))
+              (str (fs/parent common)))))
+        (catch Exception _ nil)))))
+
+(defn sibling-worktree?
+  "True when DIR is a linked git worktree whose canonical checkout is also a
+   direct child of ROOT-DIR. Such a directory is a branch of a project the
+   scan already sees, not a project of its own: scanning it doubles the
+   library and lets its dir name stand in for the lib. A worktree whose
+   checkout lives elsewhere (a sweep directory of worktrees) is kept."
+  [root-dir dir]
+  (boolean
+   (when-let [main (main-checkout dir)]
+     (= (str (fs/canonicalize root-dir))
+        (str (fs/parent (fs/canonicalize main)))))))
+
+(defn excluded-dir?
+  "True when a scan of ROOT-DIR leaves child DIR alone: it is named in
+   SKIP-DIRS (which the caller has already unioned with the skip file), or it
+   is a linked worktree of a sibling checkout."
+  [root-dir skip-dirs dir]
+  (boolean (or (skip-path? root-dir skip-dirs dir)
+               (sibling-worktree? root-dir dir))))
+
 (defn find-workspace-projects
   "Find all git-initialized subdirectories with VERSION files.
    Public: used by bb-depsolve.wave.
@@ -27,7 +67,7 @@
   (let [skip-dirs (into (set skip-dirs) (skip/dirs root-dir))]
     (->> (fs/list-dir root-dir)
          (filter fs/directory?)
-         (remove #(skip-path? root-dir skip-dirs %))
+         (remove #(excluded-dir? root-dir skip-dirs %))
          (filter #(fs/exists? (fs/path % "VERSION")))
          (filter #(fs/exists? (fs/path % ".git")))
          (sort)
@@ -67,7 +107,7 @@
                     (into [root-dir]
                           (->> (fs/list-dir root-dir)
                                (filter fs/directory?)
-                               (remove #(skip-path? root-dir skip-dirs %))
+                               (remove #(excluded-dir? root-dir skip-dirs %))
                                (sort)))
                     [root-dir])
         names (fn [dir]

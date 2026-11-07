@@ -159,7 +159,9 @@
     [:lib :bb-depsolve/lib]
     [:dir :string]
     [:release-mode :bb-depsolve/release-mode]
-    [:version [:maybe :string]]]
+    [:version [:maybe :string]]
+    [:tag-version {:optional true} :string]
+    [:published-version {:optional true} :string]]
 
    :bb-depsolve/graph-pin
    [:map
