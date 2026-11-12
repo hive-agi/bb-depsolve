@@ -12,7 +12,8 @@
             [bb-depsolve.core.resolve :as resolve]
             [bb-depsolve.version.api :as v]
             [clojure.string :as str]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [babashka.process :as proc]))
 
 (defn highest-version
   "Highest of VERSIONS by semver order, ignoring nils. Nil when none."
@@ -61,14 +62,42 @@
         (sort (keys (:nodes graph)))))
 
 (defn apply-drift!
-  "Rewrite every VERSION file under DIR to the drift's :highest.
-   => the paths written."
+  "Rewrite every VERSION file under DIR to the drift's :highest, skipping a
+   file that already holds it: a rewrite that leaves a no-op diff looks like
+   work in progress to every later tool (and collides with a release commit).
+   => the paths actually changed."
   [dir {:keys [highest]}]
-  (let [paths (cons (str (fs/path dir "VERSION"))
+  (let [content (str highest "\n")
+        paths (cons (str (fs/path dir "VERSION"))
                     (map str (fs/glob dir "**/VERSION")))]
     (into []
           (keep (fn [p]
-                  (when (fs/exists? p)
-                    (spit p (str highest "\n"))
+                  (when (and (fs/exists? p) (not= content (slurp p)))
+                    (spit p content)
                     p)))
           (distinct paths))))
+
+(defn partition-upstream
+  "Split DRIFTS by what each project's upstream branch already declares.
+   UPSTREAM is {project version-or-nil}. A drift whose upstream VERSION is
+   already at (or past) :highest is a :pull: the fix is to take upstream, and
+   rewriting the file locally only produces an uncommitted edit that collides
+   with the next release commit. Every other drift is a :rewrite.
+   => {:pull [drift+:upstream ...] :rewrite [drift ...]}"
+  [drifts upstream]
+  (reduce (fn [acc {:keys [project highest] :as d}]
+            (let [up (get upstream project)]
+              (if (and up (v/parse-semver up) (not (v/version-newer? up highest)))
+                (update acc :pull conj (assoc d :upstream up))
+                (update acc :rewrite conj d))))
+          {:pull [] :rewrite []}
+          drifts))
+
+(defn upstream-version
+  "VERSION declared on DIR's upstream branch (@{u}), or nil when there is no
+   upstream, no VERSION there, or it does not parse. Boundary: runs git."
+  [dir]
+  (let [{:keys [exit out]} (proc/sh ["git" "-C" (str dir) "show" "@{u}:VERSION"])]
+    (when (zero? exit)
+      (let [s (str/trim out)]
+        (when (v/parse-semver s) s)))))
