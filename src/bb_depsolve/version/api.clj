@@ -70,6 +70,11 @@
 (def pom-urls maven/pom-urls)
 (def parse-pom-deps-raw maven/parse-pom-deps-raw)
 (def parse-pom-deps maven/parse-pom-deps)
+
+(def parse-pom-properties maven/parse-pom-properties)
+(def pom-parent-coord maven/pom-parent-coord)
+(def substitute-properties maven/substitute-properties)
+(def parse-pom-deps-resolved maven/parse-pom-deps-resolved)
 (def deps-edn->dep-coords parse/deps-edn->dep-coords)
 (def build-dep-tree tree/build-dep-tree)
 (def find-conflicts tree/find-conflicts)

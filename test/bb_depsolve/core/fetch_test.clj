@@ -107,6 +107,59 @@
            (:error (fetch/fetch-pom-deps t "org.clojure" "clojure" "1.12.1")))
         "a failed request is an error Result, not an exception")))
 
+(def ^:private child-pom
+  (str "<project><parent><groupId>acme</groupId><artifactId>acme-parent</artifactId>"
+       "<version>3.0.0</version></parent><artifactId>child</artifactId>"
+       "<dependencies>"
+       "<dependency><groupId>${project.groupId}</groupId><artifactId>sibling</artifactId>"
+       "<version>${project.version}</version></dependency>"
+       "<dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId>"
+       "<version>${slf4j.version}</version></dependency>"
+       "</dependencies></project>"))
+
+(def ^:private parent-pom
+  (str "<project><groupId>acme</groupId><artifactId>acme-parent</artifactId>"
+       "<version>3.0.0</version><properties><slf4j.version>2.0.13</slf4j.version>"
+       "</properties></project>"))
+
+(defn- serve
+  "Stand-in GET serving the first BODY whose url fragment the url contains."
+  [calls routes]
+  (fn [url opts]
+    (swap! calls conj [url opts])
+    (if-let [body (some (fn [[frag body]] (when (str/includes? url frag) body)) routes)]
+      {:status 200 :body body}
+      {:status 404 :body ""})))
+
+(deftest fetch-pom-deps-resolves-properties-from-the-pom-and-its-parent-test
+  (let [calls (atom [])
+        t (fetch/gated-http {:get-fn (serve calls [["acme-parent-3.0.0.pom" parent-pom]
+                                                     ["child-3.0.0.pom" child-pom]])
+                             :headers-fn (constantly nil)})]
+    (is (= {:ok [{:lib 'acme/sibling :version "3.0.0"}
+                 {:lib 'org.slf4j/slf4j-api :version "2.0.13"}]}
+           (fetch/fetch-pom-deps t "acme" "child" "3.0.0"))
+        "${project.*} resolves from the POM itself, ${slf4j.version} from its parent")
+    (is (some #(str/includes? % "acme-parent-3.0.0.pom") (urls calls))
+        "the parent POM is fetched only because something stayed unresolved")))
+
+(deftest fetch-pom-deps-survives-an-unreachable-parent-test
+  (let [calls (atom [])
+        t (fetch/gated-http {:get-fn (serve calls [["child-3.0.0.pom" child-pom]])
+                             :headers-fn (constantly nil)})]
+    (is (= {:ok [{:lib 'acme/sibling :version "3.0.0"}]}
+           (fetch/fetch-pom-deps t "acme" "child" "3.0.0"))
+        "a missing parent leaves slf4j unresolved (dropped and warned), not an error")))
+
+(deftest fetch-pom-deps-does-not-fetch-a-parent-when-nothing-is-unresolved-test
+  (let [calls (atom [])
+        resolved (str/replace child-pom "${slf4j.version}" "2.0.0")
+        t (fetch/gated-http {:get-fn (serve calls [["child-3.0.0.pom" resolved]
+                                                     ["acme-parent" parent-pom]])
+                             :headers-fn (constantly nil)})]
+    (fetch/fetch-pom-deps t "acme" "child" "3.0.0")
+    (is (not-any? #(str/includes? % "acme-parent") (urls calls)))))
+
 ;; =============================================================================
 ;; Unit:fetch-git-deps-edn / fetch-git-dep-coords
 ;; =============================================================================

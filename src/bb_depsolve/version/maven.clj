@@ -134,6 +134,107 @@
         []))
     (catch Exception _ [])))
 
+(defn- pom-root
+  "Parsed <project> element and the element helpers, or nil when unparseable."
+  [xml-string]
+  (try
+    (when (string? xml-string) (xml/parse-str xml-string))
+    (catch Exception _ nil)))
+
+(defn- el-name [el] (when (keyword? (:tag el)) (name (:tag el))))
+
+(defn- child [parent tag]
+  (first (filter #(= (el-name %) tag) (:content parent))))
+
+(defn- el-text [el]
+  (when el
+    (let [s (str/trim (apply str (filter string? (:content el))))]
+      (when-not (str/blank? s) s))))
+
+(defn pom-parent-coord
+  "The <parent> coordinate of a POM as {:group :artifact :version}, or nil
+   when it declares none or is unparseable. Pure, total."
+  [xml-string]
+  (when-let [parent (some-> (pom-root xml-string) (child "parent"))]
+    (let [coord {:group    (el-text (child parent "groupId"))
+                 :artifact (el-text (child parent "artifactId"))
+                 :version  (el-text (child parent "version"))}]
+      (when (every? some? (vals coord)) coord))))
+
+(defn parse-pom-properties
+  "The properties a POM defines for itself: every <properties> entry, plus
+   project.groupId/artifactId/version (also the legacy pom.* spelling) and
+   project.parent.*. A module that declares no groupId or version inherits its
+   parent's, as Maven does. Values are raw: one property may still refer to
+   another, which `substitute-properties` resolves. Pure, total: {} on
+   nil/unparseable."
+  [xml-string]
+  (if-let [root (pom-root xml-string)]
+    (let [declared (->> (:content (child root "properties"))
+                        (keep (fn [el] (when-let [k (el-name el)]
+                                         (when-let [t (el-text el)] [k t]))))
+                        (into {}))
+          parent   (pom-parent-coord xml-string)
+          own      (fn [tag] (el-text (child root tag)))
+          group    (or (own "groupId") (:group parent))
+          version  (or (own "version") (:version parent))
+          artifact (own "artifactId")
+          coords   (cond-> {}
+                     group    (assoc "project.groupId" group "pom.groupId" group)
+                     version  (assoc "project.version" version "pom.version" version)
+                     artifact (assoc "project.artifactId" artifact "pom.artifactId" artifact)
+                     parent   (assoc "project.parent.groupId" (:group parent)
+                                     "project.parent.artifactId" (:artifact parent)
+                                     "project.parent.version" (:version parent)))]
+      (merge coords declared))
+    {}))
+
+(def ^:private max-substitution-passes
+  "Bound on property-of-property chains, which also terminates cycles."
+  10)
+
+(defn- substitute-string
+  "S with every `${k}` PROPS defines replaced, repeated until nothing changes
+   or `max-substitution-passes` is reached. The fn replacement is taken
+   literally by clojure.string/replace, so values need no quoting."
+  [s props]
+  (if-not (string? s)
+    s
+    (loop [s s, n 0]
+      (let [s' (str/replace s #"\$\{([^}]+)\}" (fn [[whole k]] (get props k whole)))]
+        (if (or (= s' s) (>= n max-substitution-passes)) s' (recur s' (inc n)))))))
+
+(defn substitute-properties
+  "COORD {:lib :version} with every `${name}` that PROPS defines replaced,
+   in both the lib symbol and the version. A property whose value names
+   another property resolves through it (bounded, so a cycle terminates).
+   An unknown property is left in place, so `filter-resolved-coords` still
+   reports it. Pure, total."
+  [coord props]
+  (if-not (and (map? coord) (seq props))
+    coord
+    (let [{:keys [lib version]} coord
+          lib' (when lib (substitute-string (str lib) props))
+          ver' (substitute-string version props)
+          ;; a substituted value may itself hold an unresolved placeholder,
+          ;; or still be a self-referring cycle: only keep a full resolution
+          ;; when it differs from the input, otherwise keep the original text
+          ver' (if (and (string? ver') (unresolved-property? ver')) version ver')]
+      (cond-> coord
+        lib     (assoc :lib (symbol lib'))
+        version (assoc :version ver')))))
+
+(defn parse-pom-deps-resolved
+  "`parse-pom-deps-raw` with each coord's `${...}` placeholders substituted
+   from the POM's own properties, falling back to INHERITED (properties of
+   the parent chain, nearest parent first, already merged by the caller).
+   The POM's own definitions win over inherited ones. Coords that stay
+   unresolved are returned unchanged for `filter-resolved-coords` to drop
+   and report. Pure, total."
+  [xml-string inherited]
+  (let [props (merge inherited (parse-pom-properties xml-string))]
+    (mapv #(substitute-properties % props) (parse-pom-deps-raw xml-string))))
+
 (defn parse-pom-deps
   "Parse POM XML string, extract compile-scope dependencies.
    Returns vec of {:lib :version}. Skips test/provided/system/optional deps
