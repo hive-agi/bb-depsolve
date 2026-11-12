@@ -91,6 +91,32 @@
             "nested VERSION files move together, matching bump-cmd"))
       (finally (fs/delete-tree dir)))))
 
+(deftest apply-drift-never-writes-a-no-op-test
+  (testing "a VERSION that already holds the value is left alone, so no diff appears"
+    (let [dir (str (fs/create-temp-dir {:prefix "bb-depsolve-rec"}))]
+      (try
+        (spit (str (fs/path dir "VERSION")) "0.2.11\n")
+        (fs/create-dirs (fs/path dir "sub"))
+        (spit (str (fs/path dir "sub" "VERSION")) "0.2.8\n")
+        (let [before (fs/last-modified-time (fs/path dir "VERSION"))
+              written (rec/apply-drift! dir {:highest "0.2.11"})]
+          (is (= [(str (fs/path dir "sub" "VERSION"))] written)
+              "only the file that changed is reported (and committed)")
+          (is (= before (fs/last-modified-time (fs/path dir "VERSION")))))
+        (finally (fs/delete-tree dir))))))
+
+(deftest a-drift-upstream-already-carries-is-a-pull-not-a-rewrite-test
+  (let [drifts [{:project "weave" :declared "0.2.8" :highest "0.2.11"}
+                {:project "system" :declared "0.1.0" :highest "0.1.8"}
+                {:project "cache" :declared "0.3.0" :highest "0.3.7"}]
+        upstream {"weave" "0.2.11" "system" "0.1.2"}
+        {:keys [pull rewrite]} (rec/partition-upstream drifts upstream)]
+    (is (= ["weave"] (mapv :project pull))
+        "upstream already declares 0.2.11: rewriting locally only collides with it")
+    (is (= ["system" "cache"] (mapv :project rewrite))
+        "an upstream behind the evidence, or no upstream at all, is still rewritten")
+    (is (= "0.2.11" (:upstream (first pull))))))
+
 ;; =============================================================================
 ;; Integration — survey
 ;; =============================================================================

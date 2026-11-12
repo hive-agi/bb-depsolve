@@ -20,7 +20,8 @@
             [bb-depsolve.release.port :as port]
             [bb-depsolve.graph.dag :as graph]
             [hive-weave.parallel :as par]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.core.git :as git]))
 
 (defn- execute-cascade!
   "Run PLAN for real, resuming from ROOT-DIR's checkpoint when one is present.
@@ -147,9 +148,13 @@
   "Rewrite VERSION files that lag the versions already evidenced by their own
    git tags or by the pins their consumers carry.
 
-   Reports only unless --apply is passed."
+   Reports only unless --apply is passed. A project whose upstream branch
+   already declares the value is reported as a pull and never rewritten, and
+   a file already at the value is never touched: a no-op VERSION edit blocks
+   the next release commit. --commit commits exactly the VERSION files
+   written, one commit per project."
   [{:keys [opts]}]
-  (let [{:keys [root org skip-dirs depth apply]
+  (let [{:keys [root org skip-dirs depth apply commit]
          :or {root "."}} opts
         skips (ropts/skip-set skip-dirs)
         root-dir (str (fs/canonicalize root))]
@@ -173,9 +178,29 @@
                                            from-tags (conj (str "tag " from-tags))
                                            from-pins (conj (str "pinned " from-pins)))))))
           (println)
-          (if apply
-            (doseq [{:keys [project] :as d} drifts]
-              (let [written (reconcile/apply-drift! (dir-of project) d)]
-                (println (ui/c :green (format "  %s — wrote %d VERSION file(s)"
-                                              project (count written))))))
-            (println (ui/c :dim "  Dry run. Pass --apply to rewrite these VERSION files."))))))))
+          (let [{:keys [pull rewrite]}
+                (reconcile/partition-upstream
+                 drifts
+                 (into {} (map (fn [{:keys [project]}]
+                                 [project (reconcile/upstream-version (dir-of project))]))
+                       drifts))]
+            ;; Upstream already carries the value: a local rewrite would only
+            ;; leave an uncommitted VERSION edit that blocks the release merge.
+            (doseq [{:keys [project upstream]} pull]
+              (println (ui/c :yellow (format "  %s — upstream already declares %s; pull instead of rewriting"
+                                             project upstream))))
+            (if apply
+              (let [written (into {}
+                                  (keep (fn [{:keys [project] :as d}]
+                                          (let [paths (reconcile/apply-drift! (dir-of project) d)]
+                                            (println (ui/c :green (format "  %s — wrote %d VERSION file(s)"
+                                                                          project (count paths))))
+                                            ;; commit-paths! keys by the dir under root.
+                                            (when (seq paths)
+                                              [(str (fs/relativize root-dir (dir-of project))) paths]))))
+                                  rewrite)]
+                (if commit
+                  (git/commit-paths! root-dir written "chore(version): reconcile VERSION with released versions")
+                  (when (seq written)
+                    (println (ui/c :dim "  Pass --commit to commit these, one commit per project.")))))
+              (println (ui/c :dim "  Dry run. Pass --apply to rewrite these VERSION files.")))))))))
