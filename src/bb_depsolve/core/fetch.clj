@@ -67,25 +67,64 @@
                       (pr-str coord)
                       (pr-str parent-coord)))))
 
+(def ^:private max-parent-depth
+  "How many <parent> POMs are walked for properties. Maven parent chains are
+   short (module -> project parent -> org parent -> apache/oss parent)."
+  5)
+
+(defn- fetch-pom-xml-any
+  "POM XML for a coordinate from Clojars, then Maven Central. Result<string>."
+  [transport group-id artifact-id version]
+  (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
+        r1 (fetch-pom-xml transport clojars-url)]
+    (if (r/ok? r1) r1 (fetch-pom-xml transport maven-url))))
+
+(defn- inherited-properties
+  "Properties of XML's <parent> chain, nearest parent winning, walked only
+   while something in COORDS is still unresolved. A parent that cannot be
+   fetched ends the walk: what it would have defined stays unresolved and is
+   dropped-and-warned downstream, never turned into an error."
+  [transport xml]
+  (loop [xml xml, depth 0, acc {}]
+    (let [parent (v/pom-parent-coord xml)
+          pxml   (when (and parent (< depth max-parent-depth))
+                   (let [r (fetch-pom-xml-any transport (:group parent)
+                                              (:artifact parent) (:version parent))]
+                     (when (r/ok? r) (:ok r))))]
+      (if-not pxml
+        acc
+        ;; nearer ancestors win: what is already in acc stays
+        (recur pxml (inc depth) (merge (v/parse-pom-properties pxml) acc))))))
+
+(defn- resolve-pom-deps
+  "Coords of XML with `${...}` resolved from the POM itself and, only when
+   that leaves something unresolved, from its parent chain."
+  [transport xml]
+  (let [own (v/parse-pom-deps-resolved xml {})]
+    (if (some v/unresolved-property? own)
+      (v/parse-pom-deps-resolved xml (inherited-properties transport xml))
+      own)))
+
 (defn fetch-pom-deps
   "Fetch and parse POM for a Maven artifact. Tries Clojars then Maven Central.
-   Filters out coords whose key fields still contain `${...}` placeholders
-   AFTER POM parsing (see bb-depsolve.version.api/filter-resolved-coords). Dropped
-   coords are logged via `warn-unresolved-coord` (not silently swallowed).
+   Maven `${...}` properties are substituted from the POM's own <properties>
+   and project coords, then from its <parent> chain (fetched over the same
+   transport, at most `max-parent-depth` levels, only when needed). Coords
+   that stay unresolved are dropped by bb-depsolve.version.api/filter-resolved-coords
+   and logged via `warn-unresolved-coord` (not silently swallowed).
    Returns Result<[{:lib :version}]>, schema-validated at this boundary
    (fail-loud). TRANSPORT defaults to `gated-http`."
   ([group-id artifact-id version]
    (fetch-pom-deps (gated-http) group-id artifact-id version))
   ([transport group-id artifact-id version]
-   (let [[clojars-url maven-url] (v/pom-urls group-id artifact-id version)
-         pom-xml (let [r1 (fetch-pom-xml transport clojars-url)]
-                   (if (r/ok? r1) r1 (fetch-pom-xml transport maven-url)))
+   (let [pom-xml (fetch-pom-xml-any transport group-id artifact-id version)
          parent  {:group group-id :artifact artifact-id :version version}
          warn-fn (partial warn-unresolved-coord parent)
+         resolve-step (fn [xml] (resolve-pom-deps transport xml))
          filter-step (fn [coords] (v/filter-resolved-coords coords warn-fn))
          validate-step (fn [coords] (sch/validate! :bb-depsolve/pom-deps coords))]
      (r/ok-> pom-xml
-             v/parse-pom-deps-raw
+             resolve-step
              filter-step
              validate-step))))
 
