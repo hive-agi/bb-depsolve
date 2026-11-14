@@ -330,6 +330,26 @@ still feed the pin rewriting, so consumers re-pin against what actually shipped
 rather than what was planned. A run that completes clears the checkpoint; a corrupt
 one is ignored rather than aborting the run.
 
+#### Release PR body template (library)
+
+`bb-depsolve.release.pr/open-release-pr!` generates a body when no non-blank
+`:body` is supplied: the VERSION change from the base branch, deduplicated commit
+subjects (up to two per conventional-commit group), applied internal dependency
+pin changes from the cascade checkpoint, and a test-plan placeholder. Customize
+that placeholder in the workspace root's `.bb-depsolve.edn`:
+
+```clojure
+{:pr-template {:test-plan "- [ ] Run the release smoke test.\n- [ ] Verify published artifacts."}}
+```
+
+The wrapper accepts `:root` (defaults to the repository directory), plus optional
+`:git-log`, `:version`, `:previous-version`, `:pr-template` and `:checkpoint` facts.
+A caller completing a cascade should pass its in-memory `:checkpoint` before the
+saved checkpoint is cleared. Explicit `:body` text takes precedence and is passed
+through unchanged. The pure renderer lives in `bb-depsolve.release.pr-body`.
+CLI flag and post-push invocation wiring are a separate slice; this library hook
+does not make cascade execution open PRs yet.
+
 #### Waiting between waves
 
 A wave's consumers cannot re-pin a dependency until that dependency's artifact is
