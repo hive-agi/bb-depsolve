@@ -87,8 +87,10 @@
   [{:keys [tag version previous-version base head git-log checkpoint pr-template]}]
   (let [test-plan (:test-plan pr-template)]
     (str "## Summary\n\n"
-         "Release " (or tag version "(untagged)") " landed on `" head
-         "`, which is not the default branch `" base "`."
+         "Merges `" head "` into `" base "`"
+         (if-let [ships (or tag version)]
+           (str " and ships `" ships "`.")
+           ".")
          (when version
            (str "\n\nVERSION: "
                 (when previous-version (str "`" previous-version "` -> "))

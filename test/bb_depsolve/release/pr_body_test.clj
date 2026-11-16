@@ -73,7 +73,7 @@
                                :checkpoint checkpoint
                                :pr-template {:test-plan "- [ ] Run the release smoke test."}})]
     (is (str/includes? rendered "VERSION: `1.1.0` -> `1.2.0`."))
-    (is (str/includes? rendered "Release v1.2.0 landed on `minor-release`"))
+    (is (str/includes? rendered "## Summary\n\nMerges `minor-release` into `main` and ships `v1.2.0`."))
     (is (str/includes? rendered "### Features\n\n- feat(api)!: expose release status"))
     (is (not (str/includes? rendered "older feature omitted")))
     (is (str/includes? rendered "## Sync ripple\n\n- `mid`: `io.github.hive-agi/hive-weave` `0.4.1` -> `0.4.2`."))
