@@ -37,6 +37,12 @@
       (do (auth/use-workspace! (select-keys opts [:root :skip-dirs :depth]))
           (cmd-fn m)))))
 
+(defn- bump-cmd
+  "`bump` with its --release-pr forge port wired: core.bump stays free of the
+   release layer, and the CLI composes the two."
+  [m]
+  (bump/bump-cmd (assoc m :release-pr! release/release-pr!)))
+
 (def dispatch-table
   [{:cmds ["sync"], :fn (wrap-help sync/sync-cmd "sync" "Sync internal Git coords to tags and Maven coords to published registry versions"), :doc "Sync internal Git and Maven coords to their authoritative sources"}
    {:cmds ["parity"]  :fn (wrap-help sync/parity-cmd "parity" "Flag public libs whose private registry is ahead of the public one")
@@ -55,7 +61,7 @@
     :doc "Check AOT-compiled jars against each project's Clojure version"}
    {:cmds ["pins"]    :fn (wrap-help pins/pins-cmd "pins" "List the deps this workspace holds back, and why")
     :doc "List the deps this workspace holds back, and why"}
-   {:cmds ["bump"]    :fn (wrap-help bump/bump-cmd    "bump"    "Bump VERSION, tag, push, optionally sync downstream")
+   {:cmds ["bump"]    :fn (wrap-help bump-cmd         "bump"    "Bump VERSION, tag, push, optionally sync downstream")
     :doc "Bump VERSION, tag, push, optionally sync downstream"}
    {:cmds ["tree"]    :fn (wrap-help tree/tree-cmd    "tree"    "Show transitive dependency tree with conflict detection")
     :doc "Show transitive dependency tree with conflict detection"}
@@ -113,6 +119,7 @@
                           :skip-remote flag-or-string
                           :remotes :string
                           :no-wait :boolean
+                          :release-pr :boolean
                           :no-fail :boolean
                           :depth :long
                           :tree-depth :long

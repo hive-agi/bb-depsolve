@@ -12,6 +12,7 @@
             [bb-depsolve.release.reconcile :as reconcile]
             [bb-depsolve.registry.live :as registry]
             [bb-depsolve.release.opts :as ropts]
+            [bb-depsolve.release.pr :as pr]
             [bb-depsolve.release.render :as render]
             [bb-depsolve.release.resume :as resume]
             [bb-depsolve.cli.ui :as ui]
@@ -23,10 +24,81 @@
             [hive-dsl.result :as r]
             [bb-depsolve.core.git :as git]))
 
+(defn report-release-pr!
+  "Print one line for PROJECT's `pr/open-release-pr!` RESULT and return RESULT.
+   Anything but a created or existing pull request is a warning, never a
+   failure: the release it follows is already pushed, and the pull request can
+   still be opened by hand."
+  [project result]
+  (let [{:keys [status url reason message]} (:ok result)]
+    (println
+     (cond
+       (not (r/ok? result))
+       (ui/c :red (format "  %-26s release PR failed: %s" project
+                          (let [error (:error result)]
+                            (if (str/blank? (str (:message error)))
+                              (pr-str error)
+                              (:message error)))))
+
+       (#{:created :exists} status)
+       (format "  %-26s %s %s" (ui/c :cyan project)
+               (ui/c :green (if (= :created status) "release PR opened:" "release PR exists:"))
+               url)
+
+       (= :not-off-default reason)
+       (ui/c :dim (format "  %-26s no release PR (%s)" project message))
+
+       :else
+       (ui/c :yellow (format "  %-26s release PR skipped: %s" project message))))
+    result))
+
+(defn release-pr!
+  "Open the release pull request for the repository in DIR through OPEN-PR!,
+   the forge port (fn [dir opts] -> Result), by default `pr/open-release-pr!`,
+   and print its outcome. Never throws: an exception becomes an error value,
+   because the release it follows is already pushed.
+   OPTS as `pr/open-release-pr!`: :tag :root :checkpoint ...
+   => the Result."
+  ([dir opts] (release-pr! pr/open-release-pr! dir opts))
+  ([open-pr! dir opts]
+   (report-release-pr!
+    (str (fs/file-name dir))
+    (try (open-pr! dir opts)
+         (catch Exception e
+           (r/err {:kind :pr/threw :message (ex-message e)}))))))
+
+(defn open-release-prs!
+  "Open the release pull request of every project a complete cascade released
+   (M4), through OPEN-PR! as `release-pr!`. `pr/open-release-pr!` skips a
+   project released on its default branch, so only the ones that landed on a
+   release branch get a pull request, and a missing or unauthenticated gh is a
+   warning.
+
+   PLAN supplies each project's :dir. CHECKPOINT is the in-memory run record,
+   earlier waves included, handed over as the M1.3 sync-ripple source because
+   the saved checkpoint is cleared when the cascade completes. ROOT-DIR is the
+   workspace root that holds .bb-depsolve.edn.
+   => [{:project :dir :result}] in release order."
+  [open-pr! root-dir plan checkpoint]
+  (let [dirs (into {} (for [wave (:waves plan)
+                            step (:steps wave)]
+                        [(:project step) (:dir step)]))]
+    (vec (for [wave (:waves checkpoint)
+               {:keys [project status tag version]} (:steps wave)
+               :let [dir (get dirs project)]
+               :when (and (= :released status) dir)]
+           {:project project
+            :dir dir
+            :result (release-pr! open-pr! dir {:root root-dir
+                                               :tag (or tag version)
+                                               :checkpoint checkpoint})}))))
+
 (defn- execute-cascade!
   "Run PLAN for real, resuming from ROOT-DIR's checkpoint when one is present.
-   Clears the checkpoint on a complete run and keeps it on an aborted one."
-  [root-dir plan {:keys [force? no-wait await-timeout]}]
+   Clears the checkpoint on a complete run and keeps it on an aborted one.
+   With RELEASE-PR?, a complete run then opens the release pull requests
+   (`open-release-prs!`) through OPEN-PR!, default `pr/open-release-pr!`."
+  [root-dir plan {:keys [force? no-wait await-timeout release-pr? open-pr!]}]
   (let [prior (resume/load-run root-dir)
         done (resume/released prior)
         todo (resume/remaining plan done)]
@@ -50,7 +122,12 @@
               (println (ui/c :green (format "Cascade complete: %d project(s) released."
                                             (count (:released run)))))
               (doseq [[p v] (sort (:released run))]
-                (printf "  %-26s %s\n" (ui/c :cyan p) (ui/c :green v))))
+                (printf "  %-26s %s\n" (ui/c :cyan p) (ui/c :green v)))
+              (when release-pr?
+                (println)
+                (println (ui/c :bold "Release pull requests:"))
+                (open-release-prs! (or open-pr! pr/open-release-pr!) root-dir plan
+                                   (update run :waves #(into (vec (:waves prior)) %)))))
           (let [{:keys [error]} result]
             (println)
             (println (exec/format-failure error))
@@ -119,9 +196,13 @@
    Seeds come from --from <csv>; without it, every project holding unpublished
    commits seeds the cascade. Planning only unless --apply is passed.
    `:registry` (default bb-depsolve.registry.live/live-registry) is the
-   IArtifactRegistry the plan reads published versions from."
-  [{:keys [opts registry]}]
-  (let [{:keys [root org no-wait await-timeout apply force]
+   IArtifactRegistry the plan reads published versions from.
+   With --apply --release-pr, a complete cascade opens a release pull request
+   for every released project whose branch is not its default
+   (`open-release-prs!`); `:open-pr!` (default `pr/open-release-pr!`) is that
+   forge port."
+  [{:keys [opts registry open-pr!]}]
+  (let [{:keys [root org no-wait await-timeout apply force release-pr]
          out-format :format
          :or {root "."}} opts
         out-format (or out-format "text")
@@ -139,7 +220,9 @@
             (println)
             (execute-cascade! root-dir plan {:force? force
                                              :no-wait no-wait
-                                             :await-timeout await-timeout}))
+                                             :await-timeout await-timeout
+                                             :release-pr? release-pr
+                                             :open-pr! open-pr!}))
 
         :else (render/print-plan plan))
       (println (ui/c :green "Nothing to cascade: every project is published up to date.")))))
