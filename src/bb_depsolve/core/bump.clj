@@ -133,9 +133,15 @@
    The tag is pushed only after the branch push lands (`publish-release!`): a
    protected branch that rejects the release commit must not receive an
    orphaned tag. A rejected push exits 1 and skips --sync. `:exit!` (default
-   System/exit) is the process-exit port."
-  [{:keys [opts exit!] :or {exit! #(System/exit %)}}]
-  (let [{:keys [root sync org force apply]
+   System/exit) is the process-exit port.
+
+   --release-pr opens the release pull request once the tag is pushed, through
+   `:release-pr!`, the forge port (fn [project-dir {:tag}] -> Result) the CLI
+   wires to `bb-depsolve.release.run/release-pr!`. That skips a release on the
+   default branch, and a missing or unauthenticated gh is a warning, never a
+   failed bump."
+  [{:keys [opts exit! release-pr!] :or {exit! #(System/exit %)}}]
+  (let [{:keys [root sync org force apply release-pr]
          :or {root "."}} opts
         project-dir (str (fs/canonicalize root))
         version-file (str (fs/path project-dir "VERSION"))]
@@ -209,6 +215,10 @@
                   (if-not (report-publish! new-tag (publish-release! run-git new-tag))
                     (exit! 1)
                     (do
+                      (when release-pr
+                        (if release-pr!
+                          (release-pr! project-dir {:tag new-tag})
+                          (println (ui/c :yellow "  --release-pr: no pull-request opener is wired here; open the PR by hand."))))
                       (println)
                       (when (and sync org)
                         (println (ui/c :bold "Running sync..."))
