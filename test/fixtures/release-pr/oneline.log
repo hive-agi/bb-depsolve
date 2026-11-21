@@ -1,0 +1,12 @@
+abc1234 feat(api)!: expose release status
+def5678 fix(sync): retain pin aliases
+123abcd feat(cli): show release notes
+cafe123 feat(api)!: expose release status
+dead123 feat: older feature omitted
+feed123 refactor(plan): simplify wave collection
+bbb1234 test: cover checkpoint resume
+ccc1234 chore(deps): bump internal dependencies
+ddd1234 fix: preserve tags on retry
+eee1234 fix: older fix omitted
+fff1234 release: v1.2.0
+111aaaa Merge pull request #12 from hive-agi/release-notes

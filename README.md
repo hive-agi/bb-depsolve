@@ -21,6 +21,21 @@ Sync internal git deps, upgrade mvn versions, and visualize dependency drift —
 bbin install io.github.hive-agi/bb-depsolve
 ```
 
+bbin writes a launcher script that pins the coordinate it resolved at install
+time, so a newer release is not picked up until you reinstall. To move to a
+release (or off a broken one, e.g. v0.6.3, whose hive-dsl pin named the wrong
+commit and failed at load with `hive-dsl.result.taxonomy` missing):
+
+```bash
+bbin ls                                    # which coordinate is installed
+bbin uninstall bb-depsolve
+bbin install io.github.hive-agi/bb-depsolve --git/tag vX.Y.Z
+head -20 "$(command -v bb-depsolve)"       # the launcher now names vX.Y.Z
+```
+
+If the old launcher still runs, another `bb-depsolve` earlier on `PATH` is
+shadowing it: `type -a bb-depsolve` lists them.
+
 ### As a workspace dependency
 
 Add to your `bb.edn`:
@@ -239,6 +254,7 @@ bb-depsolve bump --apply --sync --org hive-agi    # bump + update downstream dep
 | `--stable` | Bump major, zero rest — the 1.0.0 promotion | `0.2.1` → `1.0.0` |
 | `--apply` | Write VERSION, commit, tag, push (default: dry run) | |
 | `--sync --org <name>` | After bump, run `sync --apply` on workspace | |
+| `--release-pr` | After the push, open a `gh` PR into the default branch when the release landed on another branch | |
 
 ### `report` — Dependency matrix
 
@@ -315,6 +331,40 @@ still feed the pin rewriting, so consumers re-pin against what actually shipped
 rather than what was planned. A run that completes clears the checkpoint; a corrupt
 one is ignored rather than aborting the run.
 
+#### Release PR body template (library)
+
+`bb-depsolve.release.pr/open-release-pr!` generates a body when no non-blank
+`:body` is supplied: the VERSION change from the base branch, deduplicated commit
+subjects (up to two per conventional-commit group), applied internal dependency
+pin changes from the cascade checkpoint, and a test-plan placeholder. Customize
+that placeholder in the workspace root's `.bb-depsolve.edn`:
+
+```clojure
+{:pr-template {:test-plan "- [ ] Run the release smoke test.\n- [ ] Verify published artifacts."}}
+```
+
+The wrapper accepts `:root` (defaults to the repository directory), plus optional
+`:git-log`, `:version`, `:previous-version`, `:pr-template` and `:checkpoint` facts.
+A caller completing a cascade should pass its in-memory `:checkpoint` before the
+saved checkpoint is cleared. Explicit `:body` text takes precedence and is passed
+through unchanged. The pure renderer lives in `bb-depsolve.release.pr-body`.
+
+#### Opening release pull requests
+
+`--release-pr` opens a pull request into the default branch for every release that
+landed on another branch (a `minor-release` branch, say), with the generated body:
+
+```bash
+bb-depsolve cascade --from hive-weave --org hive-agi --apply --release-pr
+bb-depsolve bump --minor --apply --release-pr
+```
+
+A cascade opens them once it completes, one per released project, passing the
+in-memory run as the sync-ripple source; `bump` opens one after its tag is pushed.
+A project released on its default branch gets none. A missing or unauthenticated
+`gh`, or a remote that is not GitHub (gitea), is reported as a warning and the run
+carries on: the release is already pushed, and the PR can be opened by hand.
+
 #### Waiting between waves
 
 A wave's consumers cannot re-pin a dependency until that dependency's artifact is
@@ -389,6 +439,7 @@ unless forced.
 | `--no-wait` | `false` | Plan without waiting for each wave's artifacts to publish |
 | `--await-timeout <ms>` | `900000` | Per-wave ceiling for waiting on published artifacts |
 | `--force` | `false` | Execute a cascade despite cycles or unknown seeds |
+| `--release-pr` | `false` | After `cascade --apply` or `bump --apply` pushes, open a release PR for each release off the default branch |
 
 ## TUI
 

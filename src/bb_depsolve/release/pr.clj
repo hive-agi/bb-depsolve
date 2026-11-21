@@ -7,8 +7,9 @@
    output.
 
    Pure core: `pr-title`, `pr-body`, `pr-args`, `extract-url` and
-   `classify-failure` fold plain data. Every effect crosses `IGhPort`, so the
-   flow is tested with a scripted port and the real process adapter
+   `classify-failure` fold plain data. GitHub CLI effects cross `IGhPort`;
+   read-only git, VERSION, template and checkpoint inputs enrich the default
+   M4.3 body at the `open-release-pr!` boundary. The real `gh` process adapter
    (`process-port`) stays at the edge.
 
    Degradation is a value, not an exception: a missing `gh`, an
@@ -19,7 +20,11 @@
             [bb-depsolve.core.git :as git]
             [bb-depsolve.release.branch :as branch]
             [clojure.string :as str]
-            [hive-dsl.result :as r]))
+            [hive-dsl.result :as r]
+            [bb-depsolve.release.pr-body :as body]
+            [bb-depsolve.release.resume :as resume]
+            [bb-depsolve.core.remote :as remote]
+            [clojure.edn :as edn]))
 
 (defprotocol IGhPort
   "The GitHub CLI as an effect. One method, so a stub is a one-liner."
@@ -41,13 +46,11 @@
     (default-title tag)))
 
 (defn pr-body
-  "BODY as given (the M4.3 generator's output), else a minimal body naming the
-   branches and the tag. Pure."
-  [{:keys [body tag base head]}]
+  "Non-blank :body verbatim, else the pure M4.3 generator over OPTS."
+  [{:keys [body] :as opts}]
   (if (and body (not (str/blank? (str body))))
     (str body)
-    (str "Release " (or tag "(untagged)") " landed on `" head
-         "`, which is not the default branch `" base "`.")))
+    (body/render opts)))
 
 (defn pr-args
   "The `gh` argv for the pull request. Pure.
@@ -156,12 +159,55 @@
         (catch Exception e
           {:exit -1 :out "" :err (ex-message e) :missing? true})))))
 
+(defn- git-text
+  "Trimmed stdout on success, nil on failure. An empty log stays empty."
+  [dir & args]
+  (let [res (apply git/git dir args)]
+    (when (zero? (:exit res))
+      (str/trim (:out res)))))
+
+(defn- read-text
+  [path]
+  (try
+    (not-empty (str/trim (slurp path)))
+    (catch Exception _ nil)))
+
+(defn- read-template
+  [root]
+  (when-let [text (read-text (remote/config-path root))]
+    (try
+      (:pr-template (edn/read-string text))
+      (catch Exception _ nil))))
+
+(defn- with-body-facts
+  "Read-only inputs for the pure generator. Caller-supplied values win,
+   including an in-memory :checkpoint before the cascade clears it on disk."
+  [dir {:keys [root remote base head] :as opts}]
+  (let [root (or root dir)
+        base-ref (delay
+                   (let [ref (str "refs/remotes/" (or remote "origin") "/" base)]
+                     (if (git-text dir "rev-parse" "--verify" (str ref "^{commit}"))
+                       ref
+                       base)))
+        readers {:git-log #(git-text dir "log" "--format=%s" (str @base-ref ".." head) "--")
+                 :version #(read-text (str dir "/VERSION"))
+                 :previous-version #(not-empty (git-text dir "show" (str @base-ref ":VERSION")))
+                 :pr-template #(read-template root)
+                 :checkpoint #(resume/load-run root)}]
+    (reduce-kv (fn [facts k read-value]
+                 (if (contains? facts k) facts (assoc facts k (read-value))))
+               opts readers)))
+
 (defn open-release-pr!
   "Open the release pull request for the repository in DIR when its current
    branch is not the default (M4.1 `branch/detect-in`). Skips on-default,
    detached and unknown branches.
    OPTS: :port (default `process-port`), :remote, :gh-default, :overrides
          (host->provider), :tag, :title, :body.
+   Without a non-blank :body, read base..head commit subjects and VERSION from
+   git, DIR/VERSION, and ROOT's .bb-depsolve.edn :pr-template and M1.3
+   checkpoint (ROOT defaults to DIR). :git-log, :version, :previous-version,
+   :pr-template and :checkpoint may instead be supplied as plain facts.
    => Result as `create-pr!`, or {:status :skipped :reason :not-off-default
       :verdict ...}."
   [dir {:keys [port overrides] :as opts}]
@@ -171,11 +217,15 @@
              :message (str "release branch check: " (name (:status verdict)))
              :verdict verdict})
       (let [url (git/git-first-remote-url dir)
-            host (git/remote-host url)]
-        (create-pr! (or port (process-port))
-                    dir
-                    (assoc (select-keys opts [:tag :title :body])
-                           :provider (git/remote-provider url (or overrides {}))
-                           :host host
-                           :base (:default verdict)
-                           :head (:current verdict)))))))
+            host (git/remote-host url)
+            opts (assoc opts
+                        :provider (git/remote-provider url (or overrides {}))
+                        :host host
+                        :base (:default verdict)
+                        :head (:current verdict))
+            opts (if (and (= :github (:provider opts))
+                          (str/blank? (str (:body opts))))
+                   (let [facts (with-body-facts dir opts)]
+                     (assoc facts :body (pr-body facts)))
+                   opts)]
+        (create-pr! (or port (process-port)) dir opts)))))

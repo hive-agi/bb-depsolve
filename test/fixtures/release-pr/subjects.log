@@ -1,0 +1,12 @@
+feat(api)!: expose release status
+fix(sync): retain pin aliases
+feat(cli): show release notes
+feat(api)!: expose release status
+feat: older feature omitted
+refactor(plan): simplify wave collection
+test: cover checkpoint resume
+chore(deps): bump internal dependencies
+fix: preserve tags on retry
+fix: older fix omitted
+release: v1.2.0
+Merge pull request #12 from hive-agi/release-notes
