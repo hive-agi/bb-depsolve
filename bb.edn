@@ -7,7 +7,7 @@
         io.github.lispyclouds/bblgum {:git/sha "df647fb50f32e05b26e46e58d7249b4798e469e6"}
         io.github.hive-agi/hive-dsl {:mvn/version "0.6.2"}
         metosin/malli {:mvn/version "0.20.3"}
-        io.github.hive-agi/hive-spi {:mvn/version "1.4.14"}
+        io.github.hive-agi/hive-spi {:mvn/version "1.4.18"}
         io.github.hive-agi/hive-schemas {:mvn/version "0.2.2"}
         io.github.hive-agi/hive-weave {:mvn/version "0.4.7"}}
  :bbin/bin {bb-depsolve {:main-opts ["-m" "bb-depsolve.cli.main"]}}
