@@ -24,9 +24,9 @@
 ;; ---------------------------------------------------------------- Calculation
 
 (def public-repo-hosts repos/public-repo-hosts)
-(def public-repo? repos/public-repo?)
-(def repos-in repos/repos-in)
-(def private-repos repos/private-repos)
+(defn public-repo? [& args] (apply repos/public-repo? args))
+(defn repos-in [& args] (apply repos/repos-in args))
+(defn private-repos [& args] (apply repos/private-repos args))
 
 (defn parse-settings-servers
   "Credentials from a Maven settings.xml body, as {id {:username :password}}.
